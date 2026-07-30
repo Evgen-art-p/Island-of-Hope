@@ -38,14 +38,14 @@ def _slot_brain(ceh_id: str, slot: str):
     """
     Закон Картриджа для кода — тот же механизм, что в ui_torg.py и
     tester_express.py (_slot_brain, байт-в-байт). Мозг слота живёт в
-    OSTROV/Биржа/цеха/{ceh_id}/слоты/{slot}/мозг.py — не
+    GRONDHEIM_CITY/Биржа/цеха/{ceh_id}/слоты/{slot}/мозг.py — не
     захардкожен списком имён. Нет файла — честная вакансия (None),
     не ошибка. Кэш на процесс.
     """
     key = (ceh_id, slot)
     if key in _BRAIN_CACHE:
         return _BRAIN_CACHE[key]
-    brain_path = (_REPO / "OSTROV" / "Биржа" / "цеха" / ceh_id
+    brain_path = (_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / ceh_id
                  / "слоты" / slot / "мозг.py")
     if not brain_path.exists():
         _BRAIN_CACHE[key] = None

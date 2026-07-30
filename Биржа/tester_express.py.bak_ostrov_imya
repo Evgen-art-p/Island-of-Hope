@@ -47,13 +47,13 @@ _BRAIN_CACHE: dict = {}
 def _slot_brain(ceh_id: str, slot: str):
     """TESTER_EXPRESS_CARTRIDGE_V1: Закон Картриджа для кода — тот же
     механизм, что в ui_torg.py (_slot_brain). Мозг слота живёт в
-    OSTROV/Биржа/цеха/{ceh_id}/слоты/{slot}/мозг.py — не
+    GRONDHEIM_CITY/Биржа/цеха/{ceh_id}/слоты/{slot}/мозг.py — не
     захардкожен списком имён, цех сам говорит, что там лежит. Нет
     файла — честная вакансия (None), не ошибка. Кэш на процесс."""
     key = (ceh_id, slot)
     if key in _BRAIN_CACHE:
         return _BRAIN_CACHE[key]
-    brain_path = (_REPO / "OSTROV" / "Биржа" / "цеха" / ceh_id
+    brain_path = (_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / ceh_id
                  / "слоты" / slot / "мозг.py")
     if not brain_path.exists():
         _BRAIN_CACHE[key] = None
@@ -466,7 +466,7 @@ def _otchet_po_sdelkam(sdelki_do: int, out, _emit):
     from collections import defaultdict as _dd
     from pathlib import Path as _P
 
-    _pnl = (_P(__file__).resolve().parent.parent / "OSTROV" /
+    _pnl = (_P(__file__).resolve().parent.parent / "GRONDHEIM_CITY" /
             "Биржа" / "данные" / "trading_pnl.jsonl")
     if not _pnl.exists():
         return
@@ -746,7 +746,7 @@ def run_tester(csv_path: str, symbol: str, timeframe: str,
     # отчёт показал только ЭТОТ прогон, а не всю историю журнала.
     try:
         import json as _jj
-        _pnl_p = (Path(__file__).resolve().parent.parent / "OSTROV" /
+        _pnl_p = (Path(__file__).resolve().parent.parent / "GRONDHEIM_CITY" /
                   "Биржа" / "данные" / "trading_pnl.jsonl")
         _sdelok_do = 0
         if _pnl_p.exists():
