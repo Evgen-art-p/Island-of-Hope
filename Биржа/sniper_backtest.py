@@ -19,7 +19,7 @@ from typing import Optional
 
 from sniper_core import (
     read_mt5_csv, compute_atr, detect_pivots, detect_tiu, detect_iu,
-    detect_zk, _chas_bara,
+    detect_zk, detect_bpz, _chas_bara,
 )
 
 # ЗАКОН СЕССИИ (§0, §12 SCALPER_CEH_MASTER.md): торгуем только в
@@ -134,12 +134,18 @@ def _naiti_protivopolozhnyy_tiu(entry: float, long: bool, tiu: list[dict]) -> Op
 
 def _dnevnoy_bias(data: str, zk_po_datam: dict, tsena: float) -> Optional[str]:
     """Направление дня по §0/§12 канона: 'Тренд дня определяется
-    пробоем ночного флэта (ЗК)'. Если день ещё не определился (цена
-    внутри флэта) или флэт невалиден/не найден — контекста нет, и
-    без контекста сделку не берём (закон школы: 'контекст разрешает,
-    триггер исполняет' — сам триггер разрешения не даёт)."""
+    пробоем ночного флэта (ЗК)'. Раньше требовал ещё и 'валиден' (узкую
+    ширину флэта) — это лишнее: направление дня не то же самое, что
+    вопрос 'достаточно ли узок флэт, чтобы быть надёжным уровнем'.
+    Для направления хватает самого факта, что ночной диапазон найден
+    и цена сейчас по одну сторону от него.
+
+    Если день ещё не определился (цена внутри флэта) или флэт вообще
+    не найден — контекста нет, и без контекста сделку не берём (закон
+    школы: 'контекст разрешает, триггер исполняет' — сам триггер
+    разрешения не даёт)."""
     z = zk_po_datam.get(data)
-    if not z or not z["валиден"]:
+    if not z:
         return None
     if tsena > z["флэт_хай"]:
         return "HIGH"
@@ -214,6 +220,98 @@ def goliy_progon_proboy(bars_h1: list[dict], bars_m5: list[dict],
 
     return {"сделок_всего": len(vkhody), "по_вариантам": rezultaty,
            "отсеяно_без_контекста_h1": bez_konteksta}
+
+
+# ════════════════════════════════════════════════════════════
+# БЛОК ПУСТЫХ ЦЕН — вход на ретесте края, цель 90% закрытия
+# (первоисточник, Blok_Pustykh_Tsen_1.pdf: "движение закрытия будет
+# минимум 90%, обычно в течение 1-2 суток")
+# ════════════════════════════════════════════════════════════
+
+def _naiti_vhod_bpz(bars_m5: list[dict], b: dict, spred_pipsov: float,
+                    point: float, atr_m5: list, max_poisk_barov: int = 576,
+                    min_stop_atr: float = 0.5) -> Optional[dict]:
+    """Ждём, пока цена (1) уйдёт ДАЛЬШЕ за блок (подтверждение, что
+    движение продолжилось, не просто шум), а потом (2) вернётся
+    ретестировать ближний край блока — это и есть точка входа на
+    закрытие. max_poisk_barov=576 (двое суток M5) — источник прямо
+    говорит 'в течение суток или двое'.
+
+    min_stop_atr=0.5: если стоп получается уже 0.5×ATR — отбрасываем.
+    Найден реальный случай (XAUUSD): цена чуть высунулась за край и
+    тут же вернулась, стоп вышел 0.08×ATR — такую сделку в реальности
+    выбило бы спредом раньше входа, а в бэктесте она давала +165R и
+    красила всю статистику одним выбросом."""
+    idx = b["бар_индекс"]
+    lo, hi = b["лоу"], b["хай"]
+    n = len(bars_m5)
+    predel = min(n, idx + 1 + max_poisk_barov)
+
+    proshёl_dalshe = False
+    ekstremum_prodolzheniya = hi if b["направление"] == "UP" else lo
+
+    for j in range(idx + 1, predel):
+        bar = bars_m5[j]
+        if b["направление"] == "UP":
+            if bar["high"] > ekstremum_prodolzheniya:
+                ekstremum_prodolzheniya = bar["high"]
+                proshёl_dalshe = True
+                continue
+            if proshёl_dalshe and bar["low"] <= hi:
+                chas = _chas_bara(bar)
+                if chas is None or not (SESSIYA_NACHALO_CHAS <= chas <= SESSIYA_KONETS_CHAS):
+                    return None
+                spred = spred_pipsov * point
+                entry = hi
+                stop = ekstremum_prodolzheniya + spred
+                tsel = lo + 0.1 * (hi - lo)  # правило 90%
+                r = abs(stop - entry)
+                a = atr_m5[j] if j < len(atr_m5) else None
+                if r <= spred or a is None or r < min_stop_atr * a:
+                    return None
+                return {"entry_idx": j, "entry_date": bar["date"], "entry": entry,
+                       "stop": stop, "target": tsel, "r": r, "long": False}
+        else:
+            if bar["low"] < ekstremum_prodolzheniya:
+                ekstremum_prodolzheniya = bar["low"]
+                proshёl_dalshe = True
+                continue
+            if proshёl_dalshe and bar["high"] >= lo:
+                chas = _chas_bara(bar)
+                if chas is None or not (SESSIYA_NACHALO_CHAS <= chas <= SESSIYA_KONETS_CHAS):
+                    return None
+                spred = spred_pipsov * point
+                entry = lo
+                stop = ekstremum_prodolzheniya - spred
+                tsel = hi - 0.1 * (hi - lo)  # правило 90%
+                r = abs(entry - stop)
+                a = atr_m5[j] if j < len(atr_m5) else None
+                if r <= spred or a is None or r < min_stop_atr * a:
+                    return None
+                return {"entry_idx": j, "entry_date": bar["date"], "entry": entry,
+                       "stop": stop, "target": tsel, "r": r, "long": True}
+    return None
+
+
+def goliy_progon_bpz(bars_m5: list[dict], point: float,
+                     spred_pipsov: float = 2.0,
+                     max_hold_barov: int = 576) -> dict:
+    """Прогоняет Блок Пустых Цен по всей истории M5. Один выход —
+    цель 90% закрытия (правило источника), стоп — за экстремум
+    продолжения движения (с полом 0.5×ATR — см. _naiti_vhod_bpz).
+    Судья тот же: PF/винрейт/сумма R."""
+    atr_m5 = compute_atr(bars_m5)
+    bpz = detect_bpz(bars_m5, atr_m5)
+
+    pnl = []
+    for b in bpz:
+        sdelka = _naiti_vhod_bpz(bars_m5, b, spred_pipsov, point, atr_m5)
+        if not sdelka:
+            continue
+        pnl.append(_proiti_do_iskhoda(bars_m5, sdelka, target=sdelka["target"],
+                                     max_hold_barov=max_hold_barov))
+
+    return {"БПЦ_найдено": len(bpz), "входов_после_ретеста": len(pnl), "pnl": pnl}
 
 
 def _svodka(pnl_list: list[float]) -> dict:
