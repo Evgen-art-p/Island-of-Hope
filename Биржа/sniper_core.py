@@ -205,7 +205,8 @@ def _slit_blizkie_tiu(urovni: list[dict], mnozhitel_sliyaniya: float = 1.5) -> l
 def detect_iu(bars_m5: list[dict], atr_m5: list[Optional[float]],
              okno_min: int = 8, okno_max: int = 30,
              box_range_atr: float = 1.8, impuls_telo_atr: float = 1.0,
-             zakreplenie_barov: int = 2) -> list[dict]:
+             zakreplenie_barov: int = 2,
+             granitsy_po_telam: bool = True) -> list[dict]:
     """
     ИУ: коробка = окно okno_min–okno_max баров, range ≤ box_range_atr·ATR(M5).
     Импульс = бар с телом ≥ impuls_telo_atr·ATR, закрытие за коробкой.
@@ -225,8 +226,19 @@ def detect_iu(bars_m5: list[dict], atr_m5: list[Optional[float]],
             if i + okno >= n:
                 break
             segment = bars_m5[i:i + okno]
-            hi = max(b["high"] for b in segment)
-            lo = min(b["low"] for b in segment)
+            if granitsy_po_telam:
+                # ЗАКОН ТЗ: границы блока — ИСКЛЮЧИТЕЛЬНО по телам
+                # свечей. Тени исключены не для красоты: по
+                # первоисточнику шпиль — это и есть снос стопов толпы.
+                # Строить границу по тени = строить уровень по чужой
+                # ловушке, а потом ставить туда же собственный стоп.
+                hi = max(max(b["open"], b["close"]) for b in segment)
+                lo = min(min(b["open"], b["close"]) for b in segment)
+            else:
+                # старое поведение — оставлено только чтобы можно было
+                # сравнить два прогона на равных, а не по памяти
+                hi = max(b["high"] for b in segment)
+                lo = min(b["low"] for b in segment)
             if (hi - lo) > box_range_atr * atr:
                 continue  # эта ширина окна не коробка — шире гипотезы
 
@@ -609,7 +621,8 @@ def detect_blocks_generic(bars: list[dict], atr: list[Optional[float]],
                           okno_min: int = 8, okno_max: int = 30,
                           box_range_atr: float = 1.8,
                           impuls_telo_atr: float = 1.0,
-                          zakreplenie_barov: int = 2) -> list[dict]:
+                          zakreplenie_barov: int = 2,
+                          granitsy_po_telam: bool = True) -> list[dict]:
     """То же самое, что detect_iu, но без привязки к конкретному ТФ —
     вызывается и на H1, и на H4 отдельно с одними и теми же порогами.
     Разделено на функцию специально: разные ТФ должны детектироваться
@@ -618,18 +631,28 @@ def detect_blocks_generic(bars: list[dict], atr: list[Optional[float]],
     return detect_iu(bars, atr, okno_min=okno_min, okno_max=okno_max,
                      box_range_atr=box_range_atr,
                      impuls_telo_atr=impuls_telo_atr,
-                     zakreplenie_barov=zakreplenie_barov)
+                     zakreplenie_barov=zakreplenie_barov,
+                     granitsy_po_telam=granitsy_po_telam)
 
 
-def h4_trend_seychas(bars_h4: list[dict], lookback: int = 20) -> Optional[str]:
+def h4_trend_seychas(bars_h4: list[dict], lookback: int = 20,
+                     do_indeksa: Optional[int] = None) -> Optional[str]:
     """Грубый тренд старшего этажа: close сейчас против close
     lookback баров назад. Нужен только для стороны коррекционной
-    сделки (играем ПРОТИВ этого тренда)."""
+    сделки (играем ПРОТИВ этого тренда).
+
+    ПРАВКА 01.08: do_indeksa — на КАКОЙ момент считать тренд. Без
+    него функция всегда отвечала про последний бар переданной
+    истории, и прогон применял один и тот же ответ ко всем сделкам
+    за все годы (сделка 2019 года получала тренд 2026-го). Оставлен
+    старый смысл по умолчанию только для живого использования, где
+    'последний бар' действительно означает 'сейчас'."""
     n = len(bars_h4)
-    if n < lookback + 1:
+    kon = (n - 1) if do_indeksa is None else min(int(do_indeksa), n - 1)
+    if kon < lookback:
         return None
-    now = bars_h4[-1]["close"]
-    togda = bars_h4[-1 - lookback]["close"]
+    now = bars_h4[kon]["close"]
+    togda = bars_h4[kon - lookback]["close"]
     if now > togda:
         return "UP"
     if now < togda:
@@ -658,9 +681,18 @@ def klassifitsirovat_blok_h1(h1_blok: dict, h4_bloki: list[dict],
     if not h4_bloki:
         return None
 
-    # ближайший по времени H4-блок к моменту H1-блока
-    h4 = min(h4_bloki, key=lambda b: abs(b["импульсный_бар_индекс"]
-                                        - h1_blok["импульсный_бар_индекс"]))
+    # ПРАВКА 01.08: раньше "ближайший" H4-блок искался по разнице
+    # ИНДЕКСОВ БАРОВ разных таймфреймов — индекс H4 против индекса
+    # H1. Это разные линейки (один бар H4 = четыре бара H1), выбор
+    # получался случайным. И искался в обе стороны, то есть блок H1
+    # мог классифицироваться по блоку H4 из БУДУЩЕГО. Теперь:
+    # сравниваем даты и берём последний блок H4, сформированный ДО.
+    data_h1 = h1_blok.get("импульсный_бар_дата", "")
+    proshlye = [b for b in h4_bloki
+                if b.get("импульсный_бар_дата", "") <= data_h1]
+    if not proshlye:
+        return None
+    h4 = max(proshlye, key=lambda b: b.get("импульсный_бар_дата", ""))
     a4_idx = h4["импульсный_бар_индекс"]
     a4 = atr_h4[a4_idx] if a4_idx < len(atr_h4) else None
     if a4 is None:
@@ -777,3 +809,4 @@ if __name__ == "__main__":
             print(json.dumps(urezano, ensure_ascii=False, indent=2))
 
 # SNIPER_BAZA_V1 — маркер идемпотентности
+# SNIPER_CHESTNOST_V1 — границы по телам + тренд/блок H4 только из прошлого
