@@ -19,7 +19,8 @@ from typing import Optional
 
 from sniper_core import (
     read_mt5_csv, compute_atr, detect_pivots, detect_tiu, detect_iu,
-    detect_zk, detect_bpz, _chas_bara,
+    detect_zk, detect_bpz, naiti_vhod_bpz, _chas_bara,
+    detect_blocks_generic, h4_trend_seychas, klassifitsirovat_blok_h1,
 )
 
 # ЗАКОН СЕССИИ (§0, §12 SCALPER_CEH_MASTER.md): торгуем только в
@@ -43,7 +44,11 @@ def _postroit_vhod(bars_m5: list[dict], iu: dict,
     if not iu["закреплён"]:
         return None  # сетап ПРОБОЙ требует закрепления (§2 канона)
 
-    entry_idx = iu["импульсный_бар_индекс"] + 3  # после zakreplenie_barov=2
+    # ПРАВКА (замечание Локи, курс видела целиком): раньше было жёстко
+    # "+3", завязанное на старый default zakreplenie_barov=2 — если бы
+    # его поменяли в detect_iu, вход бы съезжал молча. Теперь берём
+    # число прямо из самого ИУ.
+    entry_idx = iu["импульсный_бар_индекс"] + iu["zakreplenie_barov"] + 1
     if entry_idx >= len(bars_m5):
         return None
 
@@ -228,90 +233,158 @@ def goliy_progon_proboy(bars_h1: list[dict], bars_m5: list[dict],
 # минимум 90%, обычно в течение 1-2 суток")
 # ════════════════════════════════════════════════════════════
 
-def _naiti_vhod_bpz(bars_m5: list[dict], b: dict, spred_pipsov: float,
-                    point: float, atr_m5: list, max_poisk_barov: int = 576,
-                    min_stop_atr: float = 0.5) -> Optional[dict]:
-    """Ждём, пока цена (1) уйдёт ДАЛЬШЕ за блок (подтверждение, что
-    движение продолжилось, не просто шум), а потом (2) вернётся
-    ретестировать ближний край блока — это и есть точка входа на
-    закрытие. max_poisk_barov=576 (двое суток M5) — источник прямо
-    говорит 'в течение суток или двое'.
-
-    min_stop_atr=0.5: если стоп получается уже 0.5×ATR — отбрасываем.
-    Найден реальный случай (XAUUSD): цена чуть высунулась за край и
-    тут же вернулась, стоп вышел 0.08×ATR — такую сделку в реальности
-    выбило бы спредом раньше входа, а в бэктесте она давала +165R и
-    красила всю статистику одним выбросом."""
-    idx = b["бар_индекс"]
-    lo, hi = b["лоу"], b["хай"]
-    n = len(bars_m5)
-    predel = min(n, idx + 1 + max_poisk_barov)
-
-    proshёl_dalshe = False
-    ekstremum_prodolzheniya = hi if b["направление"] == "UP" else lo
-
-    for j in range(idx + 1, predel):
-        bar = bars_m5[j]
-        if b["направление"] == "UP":
-            if bar["high"] > ekstremum_prodolzheniya:
-                ekstremum_prodolzheniya = bar["high"]
-                proshёl_dalshe = True
-                continue
-            if proshёl_dalshe and bar["low"] <= hi:
-                chas = _chas_bara(bar)
-                if chas is None or not (SESSIYA_NACHALO_CHAS <= chas <= SESSIYA_KONETS_CHAS):
-                    return None
-                spred = spred_pipsov * point
-                entry = hi
-                stop = ekstremum_prodolzheniya + spred
-                tsel = lo + 0.1 * (hi - lo)  # правило 90%
-                r = abs(stop - entry)
-                a = atr_m5[j] if j < len(atr_m5) else None
-                if r <= spred or a is None or r < min_stop_atr * a:
-                    return None
-                return {"entry_idx": j, "entry_date": bar["date"], "entry": entry,
-                       "stop": stop, "target": tsel, "r": r, "long": False}
-        else:
-            if bar["low"] < ekstremum_prodolzheniya:
-                ekstremum_prodolzheniya = bar["low"]
-                proshёl_dalshe = True
-                continue
-            if proshёl_dalshe and bar["high"] >= lo:
-                chas = _chas_bara(bar)
-                if chas is None or not (SESSIYA_NACHALO_CHAS <= chas <= SESSIYA_KONETS_CHAS):
-                    return None
-                spred = spred_pipsov * point
-                entry = lo
-                stop = ekstremum_prodolzheniya - spred
-                tsel = hi - 0.1 * (hi - lo)  # правило 90%
-                r = abs(entry - stop)
-                a = atr_m5[j] if j < len(atr_m5) else None
-                if r <= spred or a is None or r < min_stop_atr * a:
-                    return None
-                return {"entry_idx": j, "entry_date": bar["date"], "entry": entry,
-                       "stop": stop, "target": tsel, "r": r, "long": True}
-    return None
-
-
 def goliy_progon_bpz(bars_m5: list[dict], point: float,
                      spred_pipsov: float = 2.0,
                      max_hold_barov: int = 576) -> dict:
     """Прогоняет Блок Пустых Цен по всей истории M5. Один выход —
     цель 90% закрытия (правило источника), стоп — за экстремум
-    продолжения движения (с полом 0.5×ATR — см. _naiti_vhod_bpz).
-    Судья тот же: PF/винрейт/сумма R."""
+    продолжения движения (с полом 0.5×ATR — см. naiti_vhod_bpz в
+    sniper_core.py — ЕДИНСТВЕННОЕ место, где считается вход, его же
+    зовёт живой сенсор proverit_bpz_signal_seychas). Судья тот же:
+    PF/винрейт/сумма R."""
     atr_m5 = compute_atr(bars_m5)
     bpz = detect_bpz(bars_m5, atr_m5)
 
     pnl = []
     for b in bpz:
-        sdelka = _naiti_vhod_bpz(bars_m5, b, spred_pipsov, point, atr_m5)
+        sdelka = naiti_vhod_bpz(bars_m5, b, spred_pipsov, point, atr_m5)
         if not sdelka:
             continue
         pnl.append(_proiti_do_iskhoda(bars_m5, sdelka, target=sdelka["target"],
                                      max_hold_barov=max_hold_barov))
 
     return {"БПЦ_найдено": len(bpz), "входов_после_ретеста": len(pnl), "pnl": pnl}
+
+
+# ════════════════════════════════════════════════════════════
+# ПРОГОН ПО H1↔H4 БЛОКАМ (первоисточник, не плоский ЗК)
+# ════════════════════════════════════════════════════════════
+
+def goliy_progon_blok_h1_h4(bars_h1: list[dict], bars_h4: list[dict],
+                            bars_m5: list[dict], point: float,
+                            spred_pipsov: float = 2.0) -> dict:
+    """
+    Вход — тот же самый M5-пробой (_postroit_vhod, что и раньше), но
+    направление теперь разрешает не плоский 'день по ЗК', а честная
+    вложенность блоков H1↔H4 из первоисточника: блок H1 у края блока
+    H4 = разворотный, блок H1 в середине = коррекционный (играем
+    против тренда H4). М5-пробой берём, ТОЛЬКО если его направление
+    совпадает с направлением, которое даёт классификация ближайшего
+    по времени классифицированного H1-блока.
+
+    Это чаще, чем плоский ЗК: направление обновляется на КАЖДОМ новом
+    классифицированном H1-блоке, а не раз в календарный день.
+    """
+    atr_h1 = compute_atr(bars_h1)
+    atr_h4 = compute_atr(bars_h4)
+    atr_m5 = compute_atr(bars_m5)
+
+    h1_bloki = detect_blocks_generic(bars_h1, atr_h1)
+    h4_bloki = detect_blocks_generic(bars_h4, atr_h4)
+    trend4 = h4_trend_seychas(bars_h4)
+    pivoty_m5 = detect_pivots(bars_m5, lookback=2)
+
+    # классифицируем каждый H1-блок один раз, сортируем по времени —
+    # это и есть "события смены направления дня", честная замена ЗК
+    sobytiya = []
+    for hb in h1_bloki:
+        kl = klassifitsirovat_blok_h1(hb, h4_bloki, atr_h4, trend4)
+        if kl is not None:
+            sobytiya.append((bars_h1[hb["импульсный_бар_индекс"]]["date"], kl))
+    sobytiya.sort(key=lambda x: x[0])
+
+    def _bias_na_moment(data_m5: str) -> Optional[str]:
+        tekushchiy = None
+        for data_sob, kl in sobytiya:
+            if data_sob >= data_m5:
+                break
+            tekushchiy = kl["направление_входа"]
+        return tekushchiy
+
+    iu_m5 = detect_iu(bars_m5, atr_m5)
+    vkhody = []
+    bez_konteksta = 0
+    for u in iu_m5:
+        v = _postroit_vhod(bars_m5, u, spred_pipsov, point)
+        if not v:
+            continue
+        bias = _bias_na_moment(v["entry_date"])
+        if bias is None or bias != u["полярность"]:
+            bez_konteksta += 1
+            continue
+        vkhody.append(v)
+
+    rezultaty: dict = {
+        "1R": [], "1.5R": [], "2R": [], "В_трейлинг": [],
+    }
+    for sdelka in vkhody:
+        entry, stop, r, long = sdelka["entry"], sdelka["stop"], sdelka["r"], sdelka["long"]
+        for imya, mult in (("1R", 1.0), ("1.5R", 1.5), ("2R", 2.0)):
+            target = entry + (mult * r if long else -mult * r)
+            rezultaty[imya].append(_proiti_do_iskhoda(bars_m5, sdelka, target=target))
+        rezultaty["В_трейлинг"].append(
+            _proiti_do_iskhoda(bars_m5, sdelka, target=None, trailing_pivoty=pivoty_m5))
+
+    return {"сделок_всего": len(vkhody), "по_вариантам": rezultaty,
+           "отсеяно_без_контекста": bez_konteksta,
+           "h1_блоков": len(h1_bloki), "h4_блоков": len(h4_bloki),
+           "классифицировано_событий": len(sobytiya)}
+
+
+def goliy_progon_trend_posledovatelnost(bars_h1: list[dict], bars_m5: list[dict],
+                                        point: float, spred_pipsov: float = 2.0) -> dict:
+    """
+    САМАЯ простая гипотеза тренда из ТЗ (Снайпер 4.0, автор): 'Тренд —
+    последовательность направленных блоков ордеров, вероятность
+    продолжения в сторону предыдущего блока 70-80%'. Никакой
+    вложенности H1↔H4 — направление следующего блока просто ставим
+    равным направлению предыдущего блока H1, и смотрим М5-вход.
+
+    Проще, чем goliy_progon_blok_h1_h4 — если у ЭТОЙ гипотезы тоже нет
+    края, значит дело не в сложности контекста, а в чём-то другом.
+    """
+    atr_h1 = compute_atr(bars_h1)
+    atr_m5 = compute_atr(bars_m5)
+
+    h1_bloki = detect_blocks_generic(bars_h1, atr_h1)
+    sobytiya = sorted(
+        [(bars_h1[hb["импульсный_бар_индекс"]]["date"], hb["полярность"])
+         for hb in h1_bloki],
+        key=lambda x: x[0])
+    pivoty_m5 = detect_pivots(bars_m5, lookback=2)
+
+    def _bias_na_moment(data_m5: str) -> Optional[str]:
+        tekushchiy = None
+        for data_sob, napr in sobytiya:
+            if data_sob >= data_m5:
+                break
+            tekushchiy = napr  # направление ПРЕДЫДУЩЕГО блока
+        return tekushchiy
+
+    iu_m5 = detect_iu(bars_m5, atr_m5)
+    vkhody = []
+    bez_konteksta = 0
+    for u in iu_m5:
+        v = _postroit_vhod(bars_m5, u, spred_pipsov, point)
+        if not v:
+            continue
+        bias = _bias_na_moment(v["entry_date"])
+        if bias is None or bias != u["полярность"]:
+            bez_konteksta += 1
+            continue
+        vkhody.append(v)
+
+    rezultaty: dict = {"1R": [], "1.5R": [], "2R": [], "В_трейлинг": []}
+    for sdelka in vkhody:
+        entry, stop, r, long = sdelka["entry"], sdelka["stop"], sdelka["r"], sdelka["long"]
+        for imya, mult in (("1R", 1.0), ("1.5R", 1.5), ("2R", 2.0)):
+            target = entry + (mult * r if long else -mult * r)
+            rezultaty[imya].append(_proiti_do_iskhoda(bars_m5, sdelka, target=target))
+        rezultaty["В_трейлинг"].append(
+            _proiti_do_iskhoda(bars_m5, sdelka, target=None, trailing_pivoty=pivoty_m5))
+
+    return {"сделок_всего": len(vkhody), "по_вариантам": rezultaty,
+           "отсеяно_без_контекста": bez_konteksta, "h1_блоков": len(h1_bloki)}
 
 
 def _svodka(pnl_list: list[float]) -> dict:

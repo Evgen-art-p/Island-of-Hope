@@ -267,6 +267,7 @@ def detect_iu(bars_m5: list[dict], atr_m5: list[Optional[float]],
                 "импульсный_бар_индекс": k,
                 "импульсный_бар_дата": bar["date"],
                 "закреплён": zakrep,
+                "zakreplenie_barov": zakreplenie_barov,
             })
             i = k + zakreplenie_barov  # не ищем следующую коробку внутри этой же
             break
@@ -453,6 +454,238 @@ def detect_bpz(bars: list[dict], atr: list[Optional[float]],
                        "лоу": round(b["close"], 6), "хай": round(b["open"], 6),
                        "дата": b["date"]})
     return bpz
+
+
+def naiti_vhod_bpz(bars: list[dict], b: dict, spred_pipsov: float,
+                   point: float, atr: list, max_poisk_barov: int = 576,
+                   min_stop_atr: float = 0.5) -> Optional[dict]:
+    """
+    ЕДИНСТВЕННОЕ место, где считается вход по БПЦ — и офлайн-прогон
+    (sniper_backtest.py), и живой сенсор (proverit_bpz_signal_seychas
+    ниже) зовут ИМЕННО ЭТУ функцию. Раньше было две чуть разные копии
+    одной логики (тут и в sniper_backtest.py) — разошлись в мелочах,
+    живой сенсор давал 5990 лишних сигналов на GBPUSD, пока не свели
+    к одному месту правды.
+
+    Ждём, пока цена (1) уйдёт ДАЛЬШЕ за блок (подтверждение, что
+    движение продолжилось, не просто шум), а потом (2) вернётся
+    ретестировать ближний край блока — это и есть точка входа на
+    закрытие. max_poisk_barov=576 (двое суток M5) — источник прямо
+    говорит 'в течение суток или двое'.
+
+    min_stop_atr=0.5: если стоп получается уже 0.5×ATR — отбрасываем
+    (см. историю бага в docstring выше по файлу — 0.08×ATR стоп на
+    XAUUSD давал ложные +165R).
+
+    bars может быть ОБРЕЗАН по «текущий момент» (для живого сенсора) —
+    тогда forward-scan естественно не видит будущего, ищет вход только
+    внутри переданной истории.
+    """
+    idx = b["бар_индекс"]
+    lo, hi = b["лоу"], b["хай"]
+    n = len(bars)
+    predel = min(n, idx + 1 + max_poisk_barov)
+
+    proshёl_dalshe = False
+    ekstremum_prodolzheniya = hi if b["направление"] == "UP" else lo
+
+    for j in range(idx + 1, predel):
+        bar = bars[j]
+        if b["направление"] == "UP":
+            if bar["high"] > ekstremum_prodolzheniya:
+                ekstremum_prodolzheniya = bar["high"]
+                proshёl_dalshe = True
+                continue
+            if proshёl_dalshe and bar["low"] <= hi:
+                chas = _chas_bara(bar)
+                if chas is None or not (8 <= chas <= 23):
+                    return None
+                spred = spred_pipsov * point
+                entry = hi
+                stop = ekstremum_prodolzheniya + spred
+                tsel = lo + 0.1 * (hi - lo)
+                r = abs(stop - entry)
+                a = atr[j] if j < len(atr) else None
+                if r <= spred or a is None or r < min_stop_atr * a:
+                    return None
+                return {"entry_idx": j, "entry_date": bar["date"], "entry": entry,
+                       "stop": stop, "target": tsel, "r": r, "long": False}
+        else:
+            if bar["low"] < ekstremum_prodolzheniya:
+                ekstremum_prodolzheniya = bar["low"]
+                proshёl_dalshe = True
+                continue
+            if proshёl_dalshe and bar["high"] >= lo:
+                chas = _chas_bara(bar)
+                if chas is None or not (8 <= chas <= 23):
+                    return None
+                spred = spred_pipsov * point
+                entry = lo
+                stop = ekstremum_prodolzheniya - spred
+                tsel = hi - 0.1 * (hi - lo)
+                r = abs(entry - stop)
+                a = atr[j] if j < len(atr) else None
+                if r <= spred or a is None or r < min_stop_atr * a:
+                    return None
+                return {"entry_idx": j, "entry_date": bar["date"], "entry": entry,
+                       "stop": stop, "target": tsel, "r": r, "long": True}
+    return None
+
+
+def proverit_bpz_signal_seychas(bars: list[dict], atr: list[Optional[float]],
+                                spred_pipsov: float, point: float,
+                                min_stop_atr: float = 0.5,
+                                max_poisk_barov: int = 576) -> Optional[dict]:
+    """
+    ЖИВОЙ СЕНСОР — не прогон по истории, а вопрос «есть ли сигнал
+    ПРЯМО СЕЙЧАС» (на последнем баре списка). Зовёт naiti_vhod_bpz
+    (то же место правды, что и офлайн-прогон) для каждого свежего
+    БПЦ-кандидата и проверяет: если вход нашёлся, попадает ли он
+    РОВНО на последний бар переданной истории. Если да — сигнал живой,
+    сейчас. Если вход был раньше (в прошлом относительно 'сейчас') —
+    сигнал уже случился и был обработан на предыдущем вызове, не
+    сигналим повторно.
+
+    Числа считает код (закон студии) — трейдер получает готовый
+    сигнал: направление, вход, стоп, цель. Его дело — решить, брать
+    ли сделку, а не искать блоки на графике.
+
+    Возвращает None, если сигнала нет, иначе:
+      {"направление", "вход", "стоп", "цель", "r",
+       "бпц_дата", "бпц_размер"}
+    """
+    n = len(bars)
+    if n < 3:
+        return None
+    poslednii = n - 1
+
+    nachalo_okna = max(1, poslednii - max_poisk_barov)
+    for i in range(poslednii - 1, nachalo_okna - 1, -1):
+        ai = atr[i]
+        if ai is None:
+            continue
+        bar_i = bars[i]
+        dvizhenie = bar_i["close"] - bar_i["open"]
+        razmakh = bar_i["high"] - bar_i["low"]
+        if razmakh <= 0 or abs(dvizhenie) < 3.0 * ai:
+            continue
+        if abs(dvizhenie) / razmakh < 0.6:
+            continue
+
+        napravlenie = "UP" if dvizhenie > 0 else "DOWN"
+        lo = bar_i["open"] if napravlenie == "UP" else bar_i["close"]
+        hi = bar_i["close"] if napravlenie == "UP" else bar_i["open"]
+        b = {"направление": napravlenie, "бар_индекс": i, "лоу": lo, "хай": hi,
+            "дата": bar_i["date"]}
+
+        vhod = naiti_vhod_bpz(bars, b, spred_pipsov, point, atr,
+                              max_poisk_barov, min_stop_atr)
+        if vhod is None or vhod["entry_idx"] != poslednii:
+            continue  # либо нет входа вообще, либо он был раньше — не сейчас
+
+        return {
+            "направление": "SELL" if napravlenie == "UP" else "BUY",
+            "вход": round(vhod["entry"], 6), "стоп": round(vhod["stop"], 6),
+            "цель": round(vhod["target"], 6), "r": round(vhod["r"], 6),
+            "бпц_дата": b["дата"], "бпц_размер": round(hi - lo, 6),
+        }
+
+    return None
+
+
+# ════════════════════════════════════════════════════════════
+# БЛОК ОРДЕРОВ — многотаймфреймовая версия (первоисточник:
+# SILA_BLOKA.pdf, Razvorotny_blok.pdf, Korrektsionny_Blok.pdf)
+#
+# Заменяет плоский "день по ЗК" — тот был моей гипотезой, не
+# правилом автора. Правило автора: сила и смысл блока H1 зависят
+# от того, ГДЕ он стоит относительно блока H4:
+#   у края блока H4  -> РАЗВОРОТНЫЙ (вероятность автора: ~70%)
+#   в середине блока H4 -> КОРРЕКЦИОННЫЙ (играем против тренда,
+#                          сам тренд не меняется)
+# ════════════════════════════════════════════════════════════
+
+def detect_blocks_generic(bars: list[dict], atr: list[Optional[float]],
+                          okno_min: int = 8, okno_max: int = 30,
+                          box_range_atr: float = 1.8,
+                          impuls_telo_atr: float = 1.0,
+                          zakreplenie_barov: int = 2) -> list[dict]:
+    """То же самое, что detect_iu, но без привязки к конкретному ТФ —
+    вызывается и на H1, и на H4 отдельно с одними и теми же порогами.
+    Разделено на функцию специально: разные ТФ должны детектироваться
+    ОДИНАКОВОЙ логикой, иначе сравнение 'блок H1 внутри блока H4'
+    сравнивает яблоки с апельсинами."""
+    return detect_iu(bars, atr, okno_min=okno_min, okno_max=okno_max,
+                     box_range_atr=box_range_atr,
+                     impuls_telo_atr=impuls_telo_atr,
+                     zakreplenie_barov=zakreplenie_barov)
+
+
+def h4_trend_seychas(bars_h4: list[dict], lookback: int = 20) -> Optional[str]:
+    """Грубый тренд старшего этажа: close сейчас против close
+    lookback баров назад. Нужен только для стороны коррекционной
+    сделки (играем ПРОТИВ этого тренда)."""
+    n = len(bars_h4)
+    if n < lookback + 1:
+        return None
+    now = bars_h4[-1]["close"]
+    togda = bars_h4[-1 - lookback]["close"]
+    if now > togda:
+        return "UP"
+    if now < togda:
+        return "DOWN"
+    return None
+
+
+def klassifitsirovat_blok_h1(h1_blok: dict, h4_bloki: list[dict],
+                             atr_h4: list[Optional[float]],
+                             h4_trend: Optional[str],
+                             kray_dolya_atr: float = 0.25) -> Optional[dict]:
+    """
+    Смотрит, где блок H1 стоит относительно ближайшего (по времени)
+    блока H4, и классифицирует:
+
+      РАЗВОРОТНЫЙ — граница H1-блока в пределах kray_dolya_atr×ATR(H4)
+                    от границы H4-блока. Направление входа — ОТ этой
+                    границы (пробой в сторону, противоположную той,
+                    откуда цена пришла к границе H4).
+      КОРРЕКЦИОННЫЙ — H1-блок внутри диапазона H4, но не у края.
+                      Направление входа — ПРОТИВ h4_trend.
+      None — H4-блока рядом нет вообще, классифицировать не на чем.
+
+    Возвращает {"класс", "направление_входа"} или None.
+    """
+    if not h4_bloki:
+        return None
+
+    # ближайший по времени H4-блок к моменту H1-блока
+    h4 = min(h4_bloki, key=lambda b: abs(b["импульсный_бар_индекс"]
+                                        - h1_blok["импульсный_бар_индекс"]))
+    a4_idx = h4["импульсный_бар_индекс"]
+    a4 = atr_h4[a4_idx] if a4_idx < len(atr_h4) else None
+    if a4 is None:
+        return None
+
+    kray = kray_dolya_atr * a4
+    tsentr_h1 = (h1_blok["коробка_лоу"] + h1_blok["коробка_хай"]) / 2
+    lo4, hi4 = h4["коробка_лоу"], h4["коробка_хай"]
+
+    if not (lo4 - kray <= tsentr_h1 <= hi4 + kray):
+        return None  # H1-блок вообще не в диапазоне этого H4-блока
+
+    u_niza = abs(tsentr_h1 - lo4) <= kray
+    u_verkha = abs(tsentr_h1 - hi4) <= kray
+
+    if u_niza:
+        return {"класс": "разворотный", "направление_входа": "HIGH"}
+    if u_verkha:
+        return {"класс": "разворотный", "направление_входа": "LOW"}
+
+    if h4_trend == "UP":
+        return {"класс": "коррекционный", "направление_входа": "LOW"}
+    if h4_trend == "DOWN":
+        return {"класс": "коррекционный", "направление_входа": "HIGH"}
+    return None
 
 
 # ════════════════════════════════════════════════════════════
