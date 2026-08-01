@@ -45,7 +45,7 @@ if str(_BIRZHA) not in _sys.path:
     _sys.path.insert(0, str(_BIRZHA))
 import cartridge_registry as reg
 
-CITY = _REPO / "GRONDHEIM_CITY"
+CITY = _REPO / "OSTROV"
 
 
 # ───────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ from typing import Optional
 from williams_core import build_market_data, read_mt5_csv
 
 # HOOKS_TYPING_V1: тот же _slot_brain, что в ui_torg.py/tester_express.py —
-# Закон Картриджа, мозг слота живёт в GRONDHEIM_CITY/Биржа/цеха/.../слоты/.../мозг.py
+# Закон Картриджа, мозг слота живёт в OSTROV/Биржа/цеха/.../слоты/.../мозг.py
 _HERE = Path(__file__).resolve().parent
 _REPO = _HERE.parent
 _BRAIN_CACHE: dict = {}
@@ -33,7 +33,7 @@ def _slot_brain(ceh_id: str, slot: str):
     key = (ceh_id, slot)
     if key in _BRAIN_CACHE:
         return _BRAIN_CACHE[key]
-    brain_path = (_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / ceh_id
+    brain_path = (_REPO / "OSTROV" / "Биржа" / "цеха" / ceh_id
                  / "слоты" / slot / "мозг.py")
     if not brain_path.exists():
         _BRAIN_CACHE[key] = None
@@ -49,16 +49,16 @@ def _slot_brain(ceh_id: str, slot: str):
     return mod
 
 # ── Путь к Атласу Ошибок ──────────────────────────────────
-ATLAS_PATH = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные" / "atlas_trading.jsonl"
+ATLAS_PATH = _REPO / "OSTROV" / "Биржа" / "данные" / "atlas_trading.jsonl"
 
 # ── Рабочая память цеха (Спринт 43) ──────────────────────
 # Закрывает две дыры:
 #   1. Состояние Искры между прогонами (t1_status — машина состояний)
 #   2. Открытые позиции между прогонами (что закрывать по exit_bell)
-STATE_PATH = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные" / "trading_state.json"
+STATE_PATH = _REPO / "OSTROV" / "Биржа" / "данные" / "trading_state.json"
 
 # Журнал PnL сделок (НЕ billing_ledger — тот про LLM-расходы)
-PNL_PATH = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные" / "trading_pnl.jsonl"
+PNL_PATH = _REPO / "OSTROV" / "Биржа" / "данные" / "trading_pnl.jsonl"
 
 # Magic numbers — константа КОДА (реальный MT5-мост возьмёт отсюда,
 # не из памяти LLM). Промт A09 дублирует таблицу для летописи.
@@ -632,7 +632,7 @@ def _dopisat_v_dnevnik(trader: str, entry, pnl_r, reason: str, bar_time=None):
         return False
 
     sid, fname = slot
-    path = (_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / "торговый_хаос"
+    path = (_REPO / "OSTROV" / "Биржа" / "цеха" / "торговый_хаос"
             / "слоты" / sid / "данные" / fname)
     if not path.exists():
         return False
