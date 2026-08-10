@@ -1,0 +1,62 @@
+# -*- coding: utf-8 -*-
+# OSTROV_MAIN_V1
+"""
+ОСТРОВ — лёгкий запуск. Две двери, и обе рабочие.
+
+    python ostrov_main.py
+
+Городского main.py здесь нет нарочно: он поднимает кабинет Брата,
+Страницу Жизни, Академию и карту — всего этого на острове не держим.
+Остров — рабочее место: кабинет Биржи и страница работы.
+
+    /torg    кабинет Биржи — стол, кадр, разговор, РЫНОК и ВАХТА
+    /rabota  места и локации — принять, уволить, поправить бланк
+    /mayak   доска Маяка — гнёзда, связь с материком, откуда течёт МТ5
+"""
+import sys
+from pathlib import Path
+
+KOREN = Path(__file__).resolve().parent
+for _p in (KOREN, KOREN / "Биржа", KOREN / "ГОРОД", KOREN / "жители",
+           KOREN / "Маяк"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+from nicegui import ui   # noqa: E402
+
+from ui_torg import page_torg      # noqa: E402
+from ui_rabota import page_rabota  # noqa: E402
+from ui_mayak import page_mayak    # noqa: E402
+
+
+from ui_ostrov import page_ostrov   # noqa: E402  GLAVNAYA_OSTROVA_V1
+
+
+@ui.page("/")
+def _dom():
+    page_ostrov()
+
+
+@ui.page("/torg")
+def _torg0():
+    page_torg()
+
+
+@ui.page("/torg/{tseh_id}")
+def _torg(tseh_id: str = "торговый_хаос"):
+    page_torg(tseh_id)
+
+
+@ui.page("/rabota")
+def _rabota():
+    page_rabota()
+
+
+@ui.page("/mayak")
+def _mayak():
+    page_mayak()
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    print("ОСТРОВ: кабинет /torg, работа /rabota, маяк /mayak")
+    ui.run(title="Остров Надежды", port=8080, show=False, reload=False)
