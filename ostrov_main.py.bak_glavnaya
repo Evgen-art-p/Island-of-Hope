@@ -33,12 +33,9 @@ from ui_rabota import page_rabota  # noqa: E402
 from ui_mayak import page_mayak    # noqa: E402
 
 
-from ui_ostrov import page_ostrov   # noqa: E402  GLAVNAYA_OSTROVA_V1
-
-
 @ui.page("/")
 def _dom():
-    page_ostrov()
+    ui.navigate.to("/torg")
 
 
 @ui.page("/torg")
@@ -56,24 +53,6 @@ def _rabota():
     page_rabota()
 
 
-# PEREVOZKA_KNOPKI_V1 — сюда бросают архив с жителем
-from ui_perevozka import page_perevozka   # noqa: E402
-
-
-@ui.page("/perevozka")
-def _perevozka():
-    page_perevozka()
-
-
-# ZASTROYSHCHIK_V1 — здесь остров обзаводится местами
-from ui_zastroyshchik import page_zastroyshchik   # noqa: E402
-
-
-@ui.page("/zastroyshchik")
-def _zastroyshchik():
-    page_zastroyshchik()
-
-
 @ui.page("/mayak")
 def _mayak():
     page_mayak()
@@ -82,5 +61,3 @@ def _mayak():
 if __name__ in {"__main__", "__mp_main__"}:
     print("ОСТРОВ: кабинет /torg, работа /rabota, маяк /mayak")
     ui.run(title="Остров Надежды", port=8080, show=False, reload=False)
-
-# PEREVOZKA_KNOPKI_V1 - marker
