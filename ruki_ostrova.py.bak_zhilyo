@@ -1,0 +1,277 @@
+# -*- coding: utf-8 -*-
+# RUKI_OSTROVA_V1
+"""
+РУКИ ОСТРОВА — второй ряд на плашке главной, пока на острове нет Брата.
+
+Двери (первый ряд) ведут в места. Руки (второй ряд) — делают дело.
+Родится Брат на острове — этот файл переедет к нему целиком: руки его.
+
+ТРИ СТУПЕНИ ЖИТЕЛЯ (слово Шефа, 27.09)
+    ЕСТЬ      — ковчег. Житель там всегда, даже без кола и двора. На
+                острове ковчег — это причал: приплыл голым.
+    ЖИВЁТ     — прописка в жилой квартал. «Получает прописку — гражданка».
+    РАБОТАЕТ  — пост (дверь РАБОТА).
+
+ПРОПИСКА — как у Брата на материке
+    Житель несёт дом в себе: в паспорте два поля — «прописка» (где) и
+    «домашний_промпт» (какой у него дом, своими словами). Квартал о
+    жильцах ничего не хранит (Закон Пары). Прописывают только в ЖИЛОЕ
+    место (тип «жилая» в паспорте локации — ставится в Застройщике).
+
+    Прежний дом не теряется: при переписке старые «прописка» и
+    «домашний_промпт» ложатся в паспорт в «_прежние_дома» — с датой.
+    Приехавшая с материка приносит с собой свой старый дом; он её,
+    выбрасывать его мы не вправе.
+"""
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+KOREN = Path(__file__).resolve().parent
+KOVCHEG = KOREN / "GRONDHEIM_CITY" / "жители" / "ковчег"
+LOKACII = KOREN / "GRONDHEIM_CITY" / "локации"
+
+
+# ══════════════════════════════════════════════════════════════
+# ЧТЕНИЕ
+# ══════════════════════════════════════════════════════════════
+
+def _chitat(put: Path):
+    try:
+        return json.loads(put.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def zhiteli() -> list:
+    """Все, кто в ковчеге острова: [(папка_дома, паспорт)]."""
+    out = []
+    if not KOVCHEG.is_dir():
+        return out
+    for d in sorted(KOVCHEG.iterdir()):
+        p = _chitat(d / "passport.json") if d.is_dir() else None
+        if p:
+            out.append((d, p))
+    return out
+
+
+def lokacii(tolko_zhilye: bool = False) -> list:
+    out = []
+    if not LOKACII.is_dir():
+        return out
+    for d in sorted(LOKACII.iterdir()):
+        p = _chitat(d / "passport.json") if d.is_dir() else None
+        if not p:
+            continue
+        if tolko_zhilye and str(p.get("тип") or "").strip().lower() != "жилая":
+            continue
+        out.append(p)
+    return out
+
+
+def gde_zhivyot(p: dict) -> str:
+    """Человеческими словами: где житель сейчас."""
+    lid = p.get("прописка")
+    if not lid:
+        return "на причале, без прописки"
+    for loc in lokacii():
+        if loc.get("ID_Object") == lid:
+            return f"прописан(а): {loc.get('Official_Name', lid)}"
+    return f"на причале — прописка не здешняя ({lid})"
+
+
+# ══════════════════════════════════════════════════════════════
+# ЗАПИСЬ — одна точка, в паспорт жителя
+# ══════════════════════════════════════════════════════════════
+
+def _zapisat(dom: Path, p: dict):
+    put = dom / "passport.json"
+    vr = put.with_suffix(".json.tmp")
+    vr.write_text(json.dumps(p, ensure_ascii=False, indent=2),
+                  encoding="utf-8")
+    os.replace(vr, put)
+
+
+def _otlozhit_prezhniy_dom(p: dict):
+    staroe = {"прописка": p.get("прописка"),
+              "домашний_промпт": p.get("домашний_промпт") or ""}
+    if not staroe["прописка"] and not staroe["домашний_промпт"]:
+        return
+    staroe["до"] = datetime.now().isoformat(timespec="seconds")
+    p.setdefault("_прежние_дома", []).append(staroe)
+
+
+def propisat(dom: Path, lid: str, domashny: str) -> tuple:
+    p = _chitat(dom / "passport.json")
+    if p is None:
+        return False, "паспорт не читается"
+    if not any(l.get("ID_Object") == lid for l in lokacii(tolko_zhilye=True)):
+        return False, "это место не жилое — прописывают только в жилое"
+    if p.get("прописка") == lid and (p.get("домашний_промпт") or "") == domashny:
+        return True, "уже прописан(а) здесь"
+    _otlozhit_prezhniy_dom(p)
+    p["прописка"] = lid
+    p["домашний_промпт"] = domashny
+    try:
+        _zapisat(dom, p)
+    except Exception as e:
+        return False, str(e)
+    return True, "прописан(а)"
+
+
+def vypisat(dom: Path) -> tuple:
+    """Обратно на причал: без кола и двора, но житель — есть."""
+    p = _chitat(dom / "passport.json")
+    if p is None:
+        return False, "паспорт не читается"
+    if not p.get("прописка"):
+        return True, "и так на причале"
+    _otlozhit_prezhniy_dom(p)
+    p["прописка"] = None
+    p["домашний_промпт"] = ""
+    try:
+        _zapisat(dom, p)
+    except Exception as e:
+        return False, str(e)
+    return True, "выписан(а) на причал"
+
+
+# ══════════════════════════════════════════════════════════════
+# ОКНО — диалог прописки
+# ══════════════════════════════════════════════════════════════
+
+_KARTA = ("background:#0d1117; border:1px solid rgba(255,255,255,0.12); "
+          "border-radius:16px; min-width:400px; max-width:500px; padding:20px;")
+_ZAG = ('<div style="color:rgba(255,255,255,0.92); font-weight:700; '
+        'font-size:0.9rem; margin-bottom:12px; letter-spacing:0.08em;">{}</div>')
+_TIHO = ('<div style="color:rgba(255,255,255,0.45); font-size:0.74rem; '
+         'line-height:1.5; margin-bottom:10px;">{}</div>')
+_PUNKT = ("width:100%; text-align:left; font-family:monospace; "
+          "font-size:0.78rem; color:rgba(255,255,255,0.8); padding:8px 12px; "
+          "border-radius:8px; background:rgba(255,255,255,0.05); "
+          "margin-bottom:4px;")
+_NAZAD = "margin-top:10px; color:rgba(255,255,255,0.45); font-size:0.75rem;"
+
+
+def okno_propiski():
+    from nicegui import ui
+
+    vybor = {"dom": None, "p": None, "lok": None}
+
+    with ui.dialog() as dlg, ui.card().style(_KARTA):
+        telo = ui.element("div").style("width:100%;")
+
+        def risovat():
+            telo.clear()
+            with telo:
+                if vybor["dom"] is None:
+                    shag_kto()
+                elif vybor["lok"] is None:
+                    shag_kuda()
+                else:
+                    shag_dom()
+
+        def shag_kto():
+            ui.html(_ZAG.format("⌂ ПРОПИСКА · кого?"))
+            lyudi = zhiteli()
+            if not lyudi:
+                ui.html(_TIHO.format(
+                    "На причале пока никого. Жители приезжают дверью "
+                    "ПЕРЕВОЗКА — и сначала стоят здесь, без кола и двора."))
+            for dom, p in lyudi:
+                def _v(dom=dom, p=p):
+                    vybor["dom"], vybor["p"] = dom, p
+                    risovat()
+                ui.button(f"{p.get('Official_Name', dom.name)} · "
+                          f"{gde_zhivyot(p)}", on_click=_v).props(
+                    "flat no-caps").style(_PUNKT)
+            ui.button("закрыть", on_click=dlg.close).props("flat").style(_NAZAD)
+
+        def shag_kuda():
+            p = vybor["p"]
+            imya = p.get("Official_Name", "?")
+            ui.html(_ZAG.format(f"⌂ {imya} → куда?"))
+            ui.html(_TIHO.format(f"сейчас: {gde_zhivyot(p)}"))
+            zhilye = lokacii(tolko_zhilye=True)
+            if not zhilye:
+                ui.html(_TIHO.format(
+                    "Жилых мест на острове нет. Заложи место в ЗАСТРОЙЩИКЕ "
+                    "и поставь ему тип «жилая»."))
+            for loc in zhilye:
+                def _v(loc=loc):
+                    vybor["lok"] = loc
+                    risovat()
+                ui.button(f"{loc.get('Official_Name', '?')} · "
+                          f"{loc.get('District', '')}", on_click=_v).props(
+                    "flat no-caps").style(_PUNKT)
+            if p.get("прописка"):
+                def _vypisat():
+                    ok, msg = vypisat(vybor["dom"])
+                    ui.notify(f"{imya}: {msg}",
+                              color="positive" if ok else "negative")
+                    dlg.close()
+                ui.button("выписать на причал", on_click=_vypisat).props(
+                    "flat no-caps").style(_PUNKT + " color:#f0b27a;")
+
+            def _nazad():
+                vybor["dom"] = vybor["p"] = None
+                risovat()
+            ui.button("← назад", on_click=_nazad).props("flat").style(_NAZAD)
+
+        def shag_dom():
+            p, loc = vybor["p"], vybor["lok"]
+            imya = p.get("Official_Name", "?")
+            ui.html(_ZAG.format(f"⌂ {imya} → {loc.get('Official_Name', '?')}"))
+            ui.html(_TIHO.format(
+                "Домашний промпт — своё, личное: какой у неё здесь дом. "
+                "Подсказка взята из описания квартала — перепиши, как надо."))
+            if loc.get("ID_Object") == p.get("прописка"):
+                podskazka = p.get("домашний_промпт") or ""
+            else:
+                podskazka = (loc.get("Unique_Mark") or
+                             loc.get("Hidden_History") or "")
+            pole = ui.textarea(value=podskazka).props(
+                "dark outlined autogrow").style(
+                "width:100%; font-size:0.8rem;")
+            prezhniy = (p.get("домашний_промпт") or "").strip()
+            if prezhniy and loc.get("ID_Object") != p.get("прописка"):
+                with ui.expansion("её прежний дом (не пропадёт — ляжет в паспорт)").style(
+                        "width:100%; font-size:0.72rem; "
+                        "color:rgba(255,255,255,0.5); margin-top:6px;"):
+                    ui.label(prezhniy).style(
+                        "font-size:0.74rem; color:rgba(255,255,255,0.6); "
+                        "white-space:pre-wrap;")
+
+            def _da():
+                tekst = (pole.value or "").strip()
+                if not tekst:
+                    ui.notify("домашний промпт пустой — дом без слов не дом",
+                              color="warning")
+                    return
+                ok, msg = propisat(vybor["dom"], loc.get("ID_Object", ""), tekst)
+                ui.notify(f"{imya}: {msg}",
+                          color="positive" if ok else "negative")
+                if ok:
+                    dlg.close()
+
+            def _nazad():
+                vybor["lok"] = None
+                risovat()
+            with ui.row().style("width:100%; gap:8px; margin-top:12px;"):
+                ui.button("прописать", on_click=_da).props("flat no-caps").style(
+                    "flex:1; padding:9px; border-radius:10px; font-weight:700; "
+                    "color:#eaf6ff; background:rgba(120,190,230,0.22); "
+                    "border:1px solid rgba(140,200,240,0.42);")
+                ui.button("← назад", on_click=_nazad).props("flat").style(_NAZAD)
+
+        risovat()
+    dlg.open()
+
+
+# второй ряд плашки: (надпись, что делает). Брат заберёт себе этот список.
+RYAD = [
+    ("ПРОПИСКА", okno_propiski),
+]

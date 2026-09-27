@@ -462,7 +462,7 @@ def zapisat_vyvod(magic, vyvod: str, pnl_r=None, limit: int = 10) -> dict:
     try:
         res = d.dopisat_vyvod(vyvod, limit=limit,
                               pattern=_klyuch_trader(vyvod),
-                              otkuda="рынок")   # DVER_V_METKI_V1: голос вывода назван   # YAKORYA_DVA_YARUSA_V1
+                              otkuda="работа")  # CHAT_KNOPKI_I_OSMYSLIT_V1: было «рынок» — а рабочими считаются «работа» и «факт», и собственные выводы трейдера рабочим поиском НЕ находились   # DVER_V_METKI_V1: голос вывода назван   # YAKORYA_DVA_YARUSA_V1
     except AttributeError:
         print("[МОСТ] ⚠️  в dvizhok нет dopisat_vyvod — "
               "нужен patch_dvizhok_stol_chisto_vyvod_v1")
@@ -474,6 +474,34 @@ def zapisat_vyvod(magic, vyvod: str, pnl_r=None, limit: int = 10) -> dict:
     elif res.get("дописано"):
         print(f"[МОСТ] 🧠 ОПЫТ → {n['имя']}: «{vyvod}» "
               f"(якорей: {res.get('якорей')})")
+
+    # ── SUD_PATTERNA_V1: РЫНОК СУДИТ ПАТТЕРН ────────────────────
+    # Вторую половину суда не звал НИКТО: черновик ложился в маяки и
+    # оставался там навсегда. А она и решает его судьбу —
+    #     подтверждения → встаёт МЕТКОЙ (нажитое знание)
+    #     опровержения  → ГАСНЕТ в архив, честно
+    #     метку опровергли → падает обратно в черновики
+    # «Знание твердеет от СУДЬИ, а не от повторения» — а судья молчал.
+    #
+    # Ключ тот же, что при записи вывода (_klyuch_trader): придумывать
+    # нечего. Судим ФАКТ закрытия — плюс или минус, — без оценок.
+    try:
+        if pnl_r is not None:
+            _sud = d.verdikt_rynka(_klyuch_trader(vyvod),
+                                   plus=(float(pnl_r) > 0),
+                                   fakt=vyvod[:200])
+            _ishod = _sud.get("исход") or _sud.get("причина") or ""
+            if _sud.get("учтено"):
+                print(f"[СУД] ⚖ {n['имя']} · {_klyuch_trader(vyvod)}: "
+                      f"{_ishod} (за {_sud.get('за', 0)} / "
+                      f"против {_sud.get('против', 0)})")
+            elif _ishod:
+                print(f"[СУД] · {n['имя']}: {_ishod}")
+    except AttributeError:
+        print("[СУД] ⚠️  в dvizhok нет verdikt_rynka — паттерн не судится")
+    except Exception as _e:
+        print(f"[СУД] ⚠️  паттерн не рассужен ({_e}) — вывод записан, цикл цел")
+
     return res
 
 
@@ -679,7 +707,7 @@ def zapisat_vyvod_pare(ceh: str, slot: str, vyvod: str,
     try:
         res = d.dopisat_vyvod(vyvod, limit=limit,
                               pattern=_klyuch_sensora(vyvod),
-                              otkuda="рынок")   # DVER_V_METKI_V1: голос вывода назван   # YAKORYA_DVA_YARUSA_V1
+                              otkuda="работа")  # CHAT_KNOPKI_I_OSMYSLIT_V1: было «рынок» — а рабочими считаются «работа» и «факт», и собственные выводы трейдера рабочим поиском НЕ находились   # DVER_V_METKI_V1: голос вывода назван   # YAKORYA_DVA_YARUSA_V1
     except AttributeError:
         return {"дописано": False, "причина": "нет руки опыта"}
 
@@ -722,7 +750,8 @@ def ubrat_zapros(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def vspomnit_slotom(ceh: str, slot: str, zapros: str, limit: int = 6) -> str:
+def vspomnit_slotom(ceh: str, slot: str, zapros: str, limit: int = 6,
+                    o_chyom: str = "работа") -> str:
     """Житель, сидящий в слоте, копает СВОЮ память по своему запросу.
     Ищет по sensory + resonance + archive (dvizhok.vspomnit).
     Пусто — значит следа нет. Честно, без выдумок."""
@@ -738,7 +767,14 @@ def vspomnit_slotom(ceh: str, slot: str, zapros: str, limit: int = 6) -> str:
         d = _dvizhok(n["носитель"]["папка"])
         if d is None:
             return ""
-        return d.vspomnit(zapros, limit=limit) or ""
+        # PAMYAT_RABOTA_ZHIZN_V1: мост зовут С БИРЖИ — значит спрашиваем
+        # ПРАКТИКУ. Нет практики — честное «следа нет»; это правда его
+        # положения, а не повод подсунуть разговор о холсте.
+        try:
+            return d.vspomnit(zapros, limit=limit, o_chyom=o_chyom) or ""
+        except TypeError:
+            # движок старый, без разделения — не ломаемся
+            return d.vspomnit(zapros, limit=limit) or ""
     except Exception as e:
         print(f"[МОСТ] ⚠️  вспомнить не вышло ({ceh}/{slot}): {e}")
         return ""
@@ -779,3 +815,44 @@ def blok_pamyati(zapros: str, naydeno: str) -> str:
     return (f"\n\n=== 📚 ПОДНЯТО ИЗ ТВОЕЙ ПАМЯТИ (ты просил: «{zapros}») ===\n"
             f"{naydeno}\n"
             "Это твоё, было с тобой. Теперь решай.")
+
+# PAMYAT_RABOTA_ZHIZN_V1 - marker
+
+
+# ═══════════════════════════════════════════════════════════
+# YARKOE_BIRZHA_V1 — тот же приём, что MEMORY_REQUEST, только внутрь
+# ═══════════════════════════════════════════════════════════
+YARKOE_MARKER = "ЯРКОЕ:"
+
+
+def izvlech_yarkoe(text: str) -> str:
+    for line in (text or "").splitlines():
+        if YARKOE_MARKER in line:
+            return line.split(YARKOE_MARKER, 1)[1].strip()
+    return ""
+
+
+def ubrat_yarkoe(text: str) -> str:
+    lines = [l for l in (text or "").splitlines() if YARKOE_MARKER not in l]
+    return "\n".join(lines).strip()
+
+
+def otmetit_yarkim_slotom(ceh: str, slot: str, tekst: str, otkuda: str = "работа") -> dict:
+    """Житель, сидящий в слоте, сам решил — это держится дольше обычного."""
+    try:
+        n = dusha_slota(ceh, slot)
+        if not n:
+            return {"дописано": False, "причина": "вакансия"}
+        d = _dvizhok(n["носитель"]["папка"])
+        if d is None:
+            return {"дописано": False, "причина": "движок недоступен"}
+        return d.otmetit_yarkim(tekst, otkuda=otkuda)
+    except Exception as e:
+        print(f"[МОСТ] ⚠️  ярким не отметилось ({ceh}/{slot}): {e}")
+        return {"дописано": False, "причина": str(e)}
+
+# SUD_PATTERNA_V1 - marker
+
+# YARKOE_V1 - marker
+
+# CHAT_KNOPKI_I_OSMYSLIT_V1 - marker

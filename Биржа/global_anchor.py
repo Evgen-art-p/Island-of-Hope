@@ -57,6 +57,82 @@ def senior_timeframe(working_tf: str) -> Optional[str]:
     return name
 
 
+# GLUBINA_KOMPASA_V2 ─────────────────────────────────────────
+# Память о том, что уже спрашивали. В процессе, не на диске: поднял
+# город заново — спросит заново.
+_LESENKA = (2000, 500, 200)
+_GLUBINA_POMNIM: dict = {}     # (символ, этаж) -> ступень, которая дала бары
+_PUSTO_POMNIM: dict = {}       # (символ, этаж) -> когда получили пусто
+_PUSTO_ZHIVYOT = 60.0          # секунд молчать, не переспрашивая
+_POCHEMU_SKAZALI: set = set()  # KOMPAS_GOVORIT_POCHEMU_V1: один раз на пару
+
+
+# GLUBINA_KOMPASA_V3 ─────────────────────────────────────────
+# Замер Шефа (XAUUSD H1, 1500 баров): 83 с всего, из них 68 — походы
+# за барами старшего этажа. 919 обращений к терминалу на 919 баров,
+# каждое с MetaTrader5.initialize и переводом двух тысяч дат в строки.
+# Старший этаж не должен спрашиваться чаще, чем он меняется: H8 живёт
+# восемь часов, а мы дёргали его девятьсот раз подряд.
+_BARY_KESH: dict = {}          # (символ, этаж, момент) -> (бары, point, когда)
+_KESH_ZHIVYOT = 20.0           # секунд в живом режиме (курсора нет)
+_KESH_PREDEL = 8               # больше ответов не храним
+
+
+def _moment_kursora() -> str:
+    """Где стоит курсор истории. В прогоне это пришпиливает память к
+    конкретному моменту прошлого — подмены быть не может. В живом
+    режиме курсора нет, вернётся пусто."""
+    try:
+        import istoriya
+        return str(istoriya.gde_stoim() or "")
+    except Exception:
+        return ""
+
+
+def _sprosit_starshiy(symbol: str, senior: str):
+    """Бары старшего этажа. Ступень, которая сработала, запоминаем;
+    пустой ответ помним минуту и не переспрашиваем; сами бары держим
+    в памяти, пока они не могли измениться."""
+    import time
+    from feed_source import bars as source_bars
+
+    klyuch = (symbol, senior)
+
+    # ── память о самих барах ──
+    kesh_klyuch = (symbol, senior, _moment_kursora())
+    est = _BARY_KESH.get(kesh_klyuch)
+    if est is not None:
+        bary, point, kogda = est
+        # момент истории задан — ответ вечен: прошлое не меняется
+        if kesh_klyuch[2] or (time.time() - kogda) < _KESH_ZHIVYOT:
+            return bary, point
+
+    def _zapomnit(bary, point):
+        _BARY_KESH[kesh_klyuch] = (bary, point, time.time())
+        while len(_BARY_KESH) > _KESH_PREDEL:
+            _BARY_KESH.pop(next(iter(_BARY_KESH)))
+        return bary, point
+    kogda = _PUSTO_POMNIM.get(klyuch)
+    if kogda and (time.time() - kogda) < _PUSTO_ZHIVYOT:
+        return [], None
+
+    poryadok = list(_LESENKA)
+    znaem = _GLUBINA_POMNIM.get(klyuch)
+    if znaem in poryadok:
+        poryadok.remove(znaem)
+        poryadok.insert(0, znaem)
+
+    for glubina in poryadok:
+        sbars, point = source_bars(symbol, senior, count=glubina)
+        if sbars:
+            _GLUBINA_POMNIM[klyuch] = glubina
+            _PUSTO_POMNIM.pop(klyuch, None)
+            return _zapomnit(sbars, point)   # GLUBINA_KOMPASA_V3
+
+    _PUSTO_POMNIM[klyuch] = time.time()
+    return _zapomnit([], None)               # GLUBINA_KOMPASA_V3
+
+
 def global_trend(symbol: str, working_tf: str,
                  as_of_date: Optional[str] = None) -> dict:
     """
@@ -74,6 +150,20 @@ def global_trend(symbol: str, working_tf: str,
     bias=NONE — старший Аллигатор спит (боковик): большой воды нет.
     Это честный факт, не ошибка — трейдеры узнают, что фильтра нет.
     """
+    # VODA_NA_STOLE_V1: направление старшего этажа меряется СТРУКТУРОЙ
+    # (две вершины и две впадины по фракталу, подтверждение этажом выше),
+    # а не веером Аллигатора. Веер соврал на откате в 43% случаев — такой
+    # факт трейдеру на стол класть нельзя. Вид ответа прежний, читатели
+    # не меняются. Вода не сложилась — вернётся bias=NONE, и это честное
+    # «воды нет», а не поломка.
+    try:
+        import voda as _voda
+        _v = _voda.voda_na_stole(symbol, working_tf, as_of_date=as_of_date)
+        if _v:
+            return _v
+    except Exception as _e:
+        print(f"[ЯКОРЬ] вода не посчиталась ({_e}) — беру старый веер")
+
     senior = senior_timeframe(working_tf)
     if senior is None:
         return {"bias": "NONE", "senior_tf": None, "ok": False,
@@ -81,7 +171,20 @@ def global_trend(symbol: str, working_tf: str,
 
     # старшие бары через источник (кран real|tester решает откуда)
     from feed_source import bars as source_bars
-    sbars, point = source_bars(symbol, senior, count=100000)
+    # GLUBINA_KOMPASA_V1: было count=100000 — сто тысяч дневок, четыреста
+    # лет. В тестере это значило «весь файл» и работало; живой MetaTrader
+    # на такое число отдаёт ПУСТО, и компас пропадал молча, а трейдер
+    # оставался без старшей воды. Ниже по коду и так берутся последние
+    # 300 баров — больше компасу не нужно никогда.
+    # Лесенка посильных глубин: 2000 — умолчание mt5_feed.pull_bars,
+    # 200 — то, что терминал отдаёт заведомо. Первый непустой ответ.
+    # GLUBINA_KOMPASA_V2: лесенку помним, в пустое не долбимся.
+    # V1 перебирала три ступени КАЖДЫЙ раз, а компас считается на
+    # каждом баре. Пустой старший этаж стоил трёх обращений вместо
+    # одного (в реале — с двумя повторами и снами внутри насоса), и
+    # прогон по истории из быстрого стал ползучим.
+    sbars, point = _sprosit_starshiy(symbol, senior)
+    _syrykh = len(sbars or [])          # KOMPAS_GOVORIT_POCHEMU_V1
     # ОТСЕЧКА БУДУЩЕГО: оставляем только старшие бары ДО даты прогона.
     # Старший бар входит, если его дата <= дате текущего рабочего бара.
     if as_of_date and sbars:
@@ -90,6 +193,29 @@ def global_trend(symbol: str, working_tf: str,
     # берём последние 300 из отсечённого (хватает на Аллигатор + запас)
     if len(sbars) > 300:
         sbars = sbars[-300:]
+    # KOMPAS_GOVORIT_POCHEMU_V1: раньше отказ был немым — «не пришёл»,
+    # и всё. Теперь видно, на чём споткнулись: источник не дал баров,
+    # обрезка по дате прогона съела всё, или их просто мало.
+    try:
+        _skolko = len(sbars or [])
+        _klyuch_zh = (symbol, senior)
+        if _skolko < 40 or point is None:
+            if _klyuch_zh not in _POCHEMU_SKAZALI:
+                _POCHEMU_SKAZALI.add(_klyuch_zh)
+                if not _syrykh:
+                    _p = "источник не дал ни одного бара"
+                elif _skolko == 0:
+                    _p = (f"источник дал {_syrykh}, но обрезка по дате "
+                          f"{as_of_date} не оставила ни одного")
+                elif point is None:
+                    _p = f"баров {_skolko}, но цена шага (point) неизвестна"
+                else:
+                    _p = (f"баров всего {_skolko} — меньше сорока, "
+                          f"мерить веер не на чем")
+                print(f"[КОМПАС] {symbol} {senior}: {_p}")
+    except Exception:
+        pass
+
     if not sbars or point is None or len(sbars) < 40:
         return {"bias": "NONE", "senior_tf": senior, "ok": False,
                 "why": f"старший этаж {senior} не дал баров"}
@@ -158,3 +284,11 @@ def apply_global_bias(market_data: dict, symbol: str, working_tf: str) -> dict:
     return market_data
 
 # GLOBAL_ANCHOR_TYPING_V1 — маркер идемпотентности
+
+# GLUBINA_KOMPASA_V1 - marker
+
+# GLUBINA_KOMPASA_V2 - marker
+
+# GLUBINA_KOMPASA_V3 - marker
+
+# VODA_NA_STOLE_V1 - marker

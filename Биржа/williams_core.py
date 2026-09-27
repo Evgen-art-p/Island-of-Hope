@@ -118,9 +118,17 @@ def compute_alligator(highs: list[float], lows: list[float],
     teeth_s = _smma_series(medians, 8)
     lips_s  = _smma_series(medians, 5)
 
-    jaw   = jaw_s[-1]
-    teeth = teeth_s[-1]
-    lips  = lips_s[-1]
+    # ALLIGATOR_SO_SDVIGOM_V1: канон Вильямса — линии сдвинуты
+    # вперёд на 8/5/3 бара. Под текущей свечой стоит значение,
+    # насчитанное 8/5/3 бара назад. Его и отдаём — ровно то, что
+    # нарисовано на кадре и в MT4. Ряды *_series ниже остаются
+    # СЫРЫМИ: Necron и кадр сдвигают их сами.
+    _jaw_sh   = _shifted_series(jaw_s,   8)
+    _teeth_sh = _shifted_series(teeth_s, 5)
+    _lips_sh  = _shifted_series(lips_s,  3)
+    jaw   = _jaw_sh[-1]   if _jaw_sh   else None
+    teeth = _teeth_sh[-1] if _teeth_sh else None
+    lips  = _lips_sh[-1]  if _lips_sh  else None
 
     if jaw is None or teeth is None or lips is None:
         return {
@@ -137,8 +145,8 @@ def compute_alligator(highs: list[float], lows: list[float],
 
     # Считаем bars_open (сколько баров подряд открыт)
     bars_open = 0
-    for i in range(len(jaw_s) - 1, -1, -1):
-        j = jaw_s[i]; t = teeth_s[i]; l = lips_s[i]
+    for i in range(len(_jaw_sh) - 1, -1, -1):
+        j = _jaw_sh[i]; t = _teeth_sh[i]; l = _lips_sh[i]
         if j is None or t is None or l is None:
             break
         spread = max(abs(j - t), abs(t - l), abs(j - l))
@@ -178,24 +186,11 @@ def compute_ao_series(highs: list[float], lows: list[float]) -> list[Optional[fl
     return result
 
 
-def compute_ac_series(ao_series: list[Optional[float]]) -> list[Optional[float]]:
-    """
-    Accelerator Oscillator:
-      AC[i] = AO[i] - SMA(AO, 5)[i]
-    """
-    result: list[Optional[float]] = [None] * len(ao_series)
-    for i in range(len(ao_series)):
-        window = ao_series[max(0, i-4):i+1]
-        valid  = [v for v in window if v is not None]
-        if len(valid) < 5:
-            continue
-        cur = ao_series[i]
-        if cur is None:
-            continue  # WILLIAMS_CORE_TYPING_V2: структурно недостижимо
-            # (window включает cur; valid==5 доказывает cur не None) —
-            # запись существующего инварианта, не новая ветка поведения
-        result[i] = cur - sum(valid[-5:]) / 5
-    return result
+# AC_VON_V1: Accelerator Oscillator убран по слову Шефа (27.08):
+# «в современных рынках скорость не нужна, его вычищай». Формула была
+# AC = AO - SMA(AO,5); считался верно, но городу больше не нужен.
+# Вместе с ним ушла ЗОНА (AO+AC) — без AC её не существует.
+# AO остался целиком и работает как прежде.
 
 
 def detect_fractals(bars: list[dict], lookback: int = 2) -> dict:
@@ -741,15 +736,28 @@ def compute_rubber_band(
             distance_max = d
 
     eps = 1e-6
-    tension_ratio = (distance_now / distance_max) if distance_max > eps else 0.0
-    is_peak = distance_now >= distance_max * (1 - 0.02)   # на пике (±2%)
+    # REZINKA_CHESTNAYA_V1: доля считается, только пока цена по СВОЮ
+    # сторону губ. Ушла на другую (distance_now < 0) — доли нет: пик
+    # копится в одну сторону, и «сейчас/пик» давало числа вроде −4.215,
+    # которые выглядят как доля, но не значат ничего. Расстояние в
+    # пунктах со знаком остаётся — это честный факт.
+    if distance_now < 0:
+        tension_ratio = None
+    elif distance_max > eps:
+        tension_ratio = distance_now / distance_max
+    else:
+        tension_ratio = 0.0
+    is_peak = (distance_now > 0
+               and distance_now >= distance_max * (1 - 0.02))  # на пике (±2%)
     bars_in_band = i - anchor
 
     return {
         "direction":     direction,
         "distance_now":  round(distance_now, 1),
         "distance_max":  round(distance_max, 1),
-        "tension_ratio": round(tension_ratio, 3),
+        "tension_ratio": (round(tension_ratio, 3)
+                          if tension_ratio is not None else None),
+        "za_gubami":     bool(distance_now < 0),   # REZINKA_CHESTNAYA_V1
         "is_peak":       bool(is_peak),
         "bars_in_band":  bars_in_band,
     }
@@ -1070,8 +1078,10 @@ def compute_global_bias(bars: list, alligator: dict, point: float,
     medians = [(b["high"] + b["low"]) / 2 for b in bars]
     jaw_series = _smma_series(medians, 13)
     jaw_prev = None
-    if len(jaw_series) > slope_lookback:
-        cand = jaw_series[-1 - slope_lookback]
+    # ALLIGATOR_SO_SDVIGOM_V1: jaw уже со сдвигом 8 — прошлую
+    # берём тоже со сдвигом, иначе наклон меряется вкривь.
+    if len(jaw_series) > slope_lookback + 8:
+        cand = jaw_series[-1 - 8 - slope_lookback]
         if cand is not None:
             jaw_prev = cand
 
@@ -1100,6 +1110,7 @@ def build_market_data(
     symbol:    str   = "UNKNOWN",
     timeframe: str   = "D1",
     point:     Optional[float] = None,
+    starshiy:  bool  = True,   # ISKATEL_SVOY_ETAZH_V1
 ) -> dict:
     """
     Из сырых баров собирает market_data для всего Совета.
@@ -1124,7 +1135,6 @@ def build_market_data(
     _point     = point
     alligator  = compute_alligator(highs, lows, point=_point)
     ao_series  = compute_ao_series(highs, lows)
-    ac_series  = compute_ac_series(ao_series)
     fractals   = detect_fractals(bars)
     squat      = detect_squat_bars(bars, point=_point)
     mfi        = compute_mfi(bars[-1], bars[-2], point=_point)
@@ -1150,7 +1160,10 @@ def build_market_data(
     if _rb_dir is None and alligator.get("lips") is not None:
         _rb_dir = "BULL" if alligator["lips"] > alligator["teeth"] else "BEAR"
     rubber_band = compute_rubber_band(
-        bars, lips_series, teeth_series, _rb_dir, _point)
+        bars,
+        _shifted_series(lips_series, 3) if lips_series else None,
+        _shifted_series(teeth_series, 5) if teeth_series else None,
+        _rb_dir, _point)  # ALLIGATOR_SO_SDVIGOM_V1
 
     # Читалка формы AO — факты структуры для Искры v2 (окно 140-150).
     # Сенсор кладёт факты (дивер-компас, B/D/B-точка, горб-царь), не вердикты.
@@ -1170,7 +1183,14 @@ def build_market_data(
     # Подменяет синюю рабочего (она была приближением, не старшим этажом).
     # Аллигатор рабочего НЕ тронут — старший меряется отдельно через источник.
     # Якорь упал / источник недоступен -> остаётся синяя (фоллбэк, стол цел).
+    # ISKATEL_SVOY_ETAZH_V1: starshiy=False — старший этаж не
+    # спрашиваем вовсе. Нужно тем, кто ищет на СВОЁМ этаже (искатель:
+    # разворотный бар и структура считаются на рабочем). Компас тогда
+    # остаётся синей линией рабочего — тот же запасной вариант, что
+    # стоял здесь при недоступном источнике.
     try:
+        if not starshiy:
+            raise RuntimeError("старший этаж не спрашиваем")
         from global_anchor import global_trend as _gt
         _bar_time = bars[-1]["date"]  # WILLIAMS_CORE_TYPING_V1: bars уже не пуст здесь (len>=40 отсечён выше)
         _r = _gt(symbol, timeframe, as_of_date=_bar_time)
@@ -1184,8 +1204,6 @@ def build_market_data(
     # Текущие и предыдущие AO / AC
     ao_cur  = ao_series[-1]
     ao_prev = next((v for v in reversed(ao_series[:-1]) if v is not None), None)
-    ac_cur  = ac_series[-1]
-    ac_prev = next((v for v in reversed(ac_series[:-1]) if v is not None), None)
 
     # Пересечение нуля AO
     ao_crossed_zero = False
@@ -1200,9 +1218,6 @@ def build_market_data(
     if ao_cur is not None and ao_prev is not None:
         ao_direction = "UP" if ao_cur > ao_prev else "DOWN"
 
-    ac_direction = None
-    if ac_cur is not None and ac_prev is not None:
-        ac_direction = "UP" if ac_cur > ac_prev else "DOWN"
 
     last_bar = bars[-1]
 
@@ -1231,12 +1246,6 @@ def build_market_data(
             "direction":    ao_direction,
             # Последние 6 пивотов AO — Искре нужно 2 пары для дивергенции
             "pivots":       _find_ao_pivots(ao_series, bars)[-6:],
-        },
-
-        "ac": {
-            "value":      round(ac_cur,  8) if ac_cur  is not None else None,
-            "prev_value": round(ac_prev, 8) if ac_prev is not None else None,
-            "direction":  ac_direction,
         },
 
         "mfi": {
@@ -1311,3 +1320,9 @@ if __name__ == "__main__":
 # ISKRA_WAVE_MEASURE_V1 - marker
 
 # AO_DIVERGENCE_GLUBZHE_V1 - marker
+
+# ISKATEL_SVOY_ETAZH_V1 - marker
+
+# REZINKA_CHESTNAYA_V1 - marker
+
+# AC_VON_V1 - marker

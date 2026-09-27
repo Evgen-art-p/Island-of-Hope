@@ -39,6 +39,32 @@ import asyncio
 
 from nicegui import ui, app, events
 
+
+class _TeeVyvod:
+    """LOG_PROGONA_SYROY_V1: пишет разом в консоль и в файл.
+
+    Ничего не решает и не фильтрует — сырое дублирование вывода,
+    чтобы после прогона было что почитать, кроме памяти терминала.
+    """
+
+    def __init__(self, *potoki):
+        self.potoki = potoki
+
+    def write(self, dannye):
+        for p in self.potoki:
+            try:
+                p.write(dannye)
+            except Exception:
+                pass
+
+    def flush(self):
+        for p in self.potoki:
+            try:
+                p.flush()
+            except Exception:
+                pass
+
+
 _HERE = Path(__file__).resolve().parent          # Биржа/
 _REPO = _HERE.parent                              # корень репо
 for _p in (_REPO, _HERE):
@@ -55,11 +81,17 @@ import llm  # BIRZHA_MODEL_SEL_V1: переключатель модели -- se
 # существует, но не подключён ни к одному слоту).
 MODELS_CATALOG = [
     {"id": "openai/gpt-4o-mini-2024-07-18",    "name": "GPT-4o mini",      "price": "$0.15/$0.60"},
-    {"id": "google/gemini-2.5-flash",          "name": "Gemini 2.5 Flash",  "price": "$0.15/$0.60"},
+    {"id": "openai/gpt-5.6-luna",              "name": "GPT-5.6 Luna",      "price": "$0.20 / $1.20"},
+    {"id": "openai/gpt-5-mini",                "name": "GPT-5 Mini",      "price": "$0.25 / $2"},
+    {"id": "google/gemini-2.5-flash",          "name": "Gemini 2.5 Flash",  "price": "$0.30 / $2.50"},
     {"id": "anthropic/claude-haiku-4-5",       "name": "Claude Haiku 4.5",  "price": "$1/$5"},
     {"id": "deepseek/deepseek-chat",           "name": "DeepSeek V3",       "price": "$0.14/$0.28"},
     {"id": "meta-llama/llama-3.3-70b-instruct","name": "Llama 3.3 70B",     "price": "$0.10/$0.32"},
     {"id": "anthropic/claude-sonnet-4-5",      "name": "Claude Sonnet 4.5", "price": "$3/$15"},
+    # QWEN_V_SPISKE_V1 (слово Шефа 10.09). Цена прочерком:
+    # выдуманное число хуже отсутствующего — по нему станут
+    # считать. Посмотрит на openrouter.ai — впишем.
+    {"id": "qwen/qwen3.5-397b-a17b",           "name": "Qwen 3.5 397B",   "price": "$0.39 / $2.34"},
 ]
 # GEMINI_PO_UMOLCHANIYU_V1: открываемся на модели, которая ВИДИТ кадр.
 # Проверено Шефом на одном и том же кадре: 4o mini читал «Аллигатор спит,
@@ -71,6 +103,54 @@ DEFAULT_MODEL = next(
 
 import importlib.util
 from typing import Any  # UI_TORG_TYPING_V1
+
+# BELYY_SHRIFT_V1: читаемость на тёмном — см.
+# postavit_belyy_shrift.py. Красим только то, что
+# рисует Quasar своей светлой темой внутри наших
+# тёмных карточек.
+_BELYY_SHRIFT = r"""
+/* BELYY_SHRIFT_V1 — читаемость на тёмном.
+   Карточки диалогов рисуем мы (тёмные), а подписи внутри — Quasar по
+   своей СВЕТЛОЙ теме. Отсюда тёмно-серые буквы на чёрном: в окне
+   перевозки так пропадали имена жителей у галочек.
+   Красим только то, что отдано Quasar'у. Кнопки и наши собственные
+   раскрашенные надписи не трогаем — у них цвет задан руками. */
+.q-dialog .q-card,
+.q-dialog .q-card .q-item__label,
+.q-dialog .q-card label,
+.q-checkbox__label,
+.q-radio__label,
+.q-toggle__label,
+.q-field__native,
+.q-field__input,
+.q-field__label,
+.q-field__prefix,
+.q-field__suffix,
+.q-item__label,
+.q-tab__label,
+.q-select__dropdown-icon,
+.q-menu .q-item,
+.q-menu .q-item__label {
+  color: rgba(255,255,255,0.92) !important;
+}
+
+/* Подсказка в пустом поле — белая, но приглушённая: она не должна
+   спорить с тем, что человек уже вписал. */
+.q-field__native::placeholder,
+.q-field__input::placeholder,
+.q-placeholder::placeholder {
+  color: rgba(255,255,255,0.45) !important;
+}
+
+/* Выпадающий список Quasar рисует НЕ внутри нашей карточки, а
+   отдельным слоем поверх страницы — своей темой. Без этого он
+   оставался светлым пятном с белым текстом на белом. */
+.q-menu {
+  background: #0d1117 !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+"""
+
 
 _BRAIN_CACHE = {}
 
@@ -103,6 +183,16 @@ def _slot_brain(ceh_id: str, slot: str):
 
 
 KVARTAL = "Биржа"
+
+# LENTA_NE_ZABIVAET_BRAUZER_V1: сколько последних сообщений
+# рисуем. Остальное никуда не девается — оно в памяти и в
+# отчёте, просто не перерисовывается каждую секунду.
+LENTA_HVOST = 80
+
+# KADR_NE_TERYAETSYA_V1: последний кадр, общий на ВСЕ вкладки.
+# Прогон мог начаться в одном окне, а смотрят из другого —
+# счёт растёт, и любое живое окно видит, что кадр сменился.
+_KADR_NA_VIDU = {"put": None, "podpis": "", "schet": 0}
 
 # ── СОСТАВ СОВЕТА — порядок/иконки как в старом TRADING_COUNCIL ──────
 # (ceh_id, реальный_слот_в_цехе, id_для_движка(A01..A09), иконка)
@@ -577,14 +667,279 @@ body{
 """
 
 
+# ══════════════════════════════════════════════════════════════
+# ВАХТА ГОРОДСКАЯ (VAHTA_GORODSKAYA_V1)
+# ══════════════════════════════════════════════════════════════
+# Была вахта комнатная: таймер жил в открытой вкладке. Ушёл на другую
+# страницу — вахта встала, и никто об этом не сказал.
+#
+# Теперь она живёт при ГОРОДЕ, а не при окне: заводится один раз на
+# запуск, тикает на сервере и работает, пока город поднят. Закрыл
+# браузер — она всё равно стоит на посту. Вернулся — кнопка горит.
+_VAHTA = {
+    "идёт": False,      # стоим ли на вахте
+    "инструмент": "",   # что сторожим — запомнили в миг нажатия
+    "этаж": "",
+    "бар": "",          # на какой свече стоим
+    "цех": "",          # KABINET_ZNAET_CEH_V1: чей цех сторожим
+    "работает": False,  # прогон уже идёт — второй не начинаем
+    "последнее": "",    # что случилось в прошлый раз (для кнопки)
+}
+_VAHTA_ZAVEDENA = False
+
+
+def _vahta_posledniy_bar(symbol: str, tf: str) -> str:
+    try:
+        from feed_source import bars as _src_bars
+        _bs, _ = _src_bars(symbol, tf, 3)
+        if _bs:
+            return str(_bs[-1].get("date", ""))
+    except Exception:
+        pass
+    return ""
+
+
+async def _vahta_sluzhba():
+    """Тик вахты. Живёт на сервере, окна не касается.
+
+    VAHTA_GORODSKAYA_V1: Совет зовём НАПРЯМУЮ, а не через кнопку
+    кабинета — кнопка рисует в окно, а окна может не быть вовсе.
+    """
+    if not _VAHTA["идёт"] or _VAHTA["работает"]:
+        return
+    # EDINYY_VYBOR_V1: сторожим ЭКРАН, а не то, что вахта запомнила
+    # при нажатии. Переехал выбор — вахта переехала следом, снимать и
+    # заводить заново не нужно. Экран пуст — держимся прежнего.
+    sym, tf = _VAHTA["инструмент"], _VAHTA["этаж"]
+    try:
+        import ekran as _ekr
+        _i, _e = _ekr.para()
+        if _i and _e and (_i, _e) != (sym, tf):
+            print(f"[ВАХТА] ▣ выбор переехал: {sym} {tf} → {_i} {_e}")
+            sym, tf = _i, _e
+            _VAHTA.update({"инструмент": _i, "этаж": _e, "бар": ""})
+            return          # новый пост — этот тик только запоминаем
+    except Exception:
+        pass
+    if not sym or not tf:
+        return
+    bar = _vahta_posledniy_bar(sym, tf)
+    if not bar:
+        return
+    if not _VAHTA["бар"]:
+        _VAHTA["бар"] = bar          # первый тик — только запомнить
+        return
+    if bar == _VAHTA["бар"]:
+        return
+
+    _VAHTA["бар"] = bar
+    _VAHTA["работает"] = True
+    print(f"[ВАХТА] 🔔 новая свеча {sym} {tf} · {bar[:16]} — зову Совет")
+    try:
+        import asyncio as _a
+        import council
+        # KABINET_ZNAET_CEH_V1: вахта сторожит СВОЙ цех, а не «какой-то».
+        _ceh = _VAHTA.get("цех") or ""
+        await _a.get_event_loop().run_in_executor(
+            None, lambda: (council.wake_council("", "", ceh_id=_ceh)
+                           if _ceh else council.wake_council("", "")))
+        _VAHTA["последнее"] = f"{bar[:16]} · Совет отработал"
+        print(f"[ВАХТА] ✓ {sym} {tf} · {bar[:16]} — Совет отработал")
+    except Exception as e:
+        _VAHTA["последнее"] = f"{bar[:16]} · сбой: {e}"
+        print(f"[ВАХТА] ⚠️  сбой на {sym} {tf}: {e}")
+    finally:
+        _VAHTA["работает"] = False
+
+
+def _vahta_zavesti():
+    """Один тик на весь город, не на каждое окно.
+
+    VAHTA_ZAVEDI_LYUBOY_V1: раньше звался только app.timer — в NiceGUI
+    постарше его нет, и вахта молча не заводилась. Кнопка горела, а
+    тика не было: худший вид поломки. Теперь три захода по очереди,
+    и если не вышло ни одного — говорим об этом вслух, а не молчим.
+    """
+    global _VAHTA_ZAVEDENA
+    if _VAHTA_ZAVEDENA:
+        return
+    # 1. городской таймер NiceGUI — если он в этой версии есть
+    try:
+        from nicegui import app as _app
+        if hasattr(_app, "timer"):
+            _app.timer(20.0, _vahta_sluzhba)
+            _VAHTA_ZAVEDENA = True
+            print("[ВАХТА] ⏱ заведена городским таймером (тик 20 сек)")
+            return
+    except Exception as e:
+        print(f"[ВАХТА] городской таймер не вышел: {e}")
+    # 2. своя петля в общем круге — работает в любой версии
+    try:
+        import asyncio as _a
+
+        async def _petlya():
+            print("[ВАХТА] ⏱ заведена своей петлёй (тик 20 сек)")
+            while True:
+                await _a.sleep(20)
+                try:
+                    await _vahta_sluzhba()
+                except Exception as e:
+                    print(f"[ВАХТА] ⚠️  сбой тика: {e}")
+
+        _a.get_event_loop().create_task(_petlya())
+        _VAHTA_ZAVEDENA = True
+        return
+    except Exception as e:
+        print(f"[ВАХТА] своя петля не вышла: {e}")
+    # 3. отдельная нитка — последний заход
+    try:
+        import asyncio as _a
+        import threading as _t
+
+        def _nitka():
+            print("[ВАХТА] ⏱ заведена отдельной ниткой (тик 20 сек)")
+            while True:
+                _time.sleep(20)
+                try:
+                    _a.run(_vahta_sluzhba())
+                except Exception as e:
+                    print(f"[ВАХТА] ⚠️  сбой тика: {e}")
+
+        import time as _time
+        _t.Thread(target=_nitka, daemon=True).start()
+        _VAHTA_ZAVEDENA = True
+        return
+    except Exception as e:
+        print(f"[ВАХТА] ⚠️  НЕ ЗАВЕЛАСЬ ВОВСЕ: {e}")
+        print("[ВАХТА] ⚠️  кнопка гореть будет, а сторожить некому — "
+              "нажимай РЫНОК руками")
+
+
+
+
+# KABINET_ZHIVYOT_PRI_GORODE_V1: память кабинета живёт ПРИ ГОРОДЕ,
+# а не при вкладке. Раньше state рождался внутри страницы: моргнула
+# связь или обновилась страница — рождался новый пустой, лента
+# исчезала с экрана, а прогон продолжал писать в старый, которого
+# уже никто не видит. Один кабинет на цех — как один стол и один
+# момент истории.
+_KABINETY: dict = {}
+
+
+
+def _bystryy_pasport(p) -> dict | None:
+    """Три числа о файле БЕЗ разбора баров: сколько строк, первая
+    дата, последняя.
+
+    POLKA_NE_DUSHIT_SVYAZ_V1. Формат тот же, что читает read_mt5_csv:
+    MT5-выгруз в utf-16-le, поля через запятую, дата первым полем.
+
+    Строки считаем кусками по мегабайту — это чтение с диска и ничего
+    больше. Последнюю строку берём с ХВОСТА файла, не проходя его
+    целиком. Не вышло — возвращаем None, и зовущий разберёт файл
+    по-старому.
+    """
+    try:
+        razmer = p.stat().st_size
+        if razmer <= 0:
+            return None
+
+        KUSOK = 1 << 20          # мегабайт за раз
+        perevodov = 0
+        pervaya = b""
+        with open(p, "rb") as f:
+            kusok = f.read(KUSOK)
+            if not kusok:
+                return None
+            pervaya = kusok.split(b"\n", 1)[0]
+            while kusok:
+                perevodov += kusok.count(b"\n")
+                kusok = f.read(KUSOK)
+
+            # Хвост: последняя непустая строка. Кодировка utf-16-le —
+            # два байта на букву, поэтому и начало куска, и разбор
+            # должны идти по буквам, а не по байтам, иначе последняя
+            # дата читается мусором.
+            hvost_dlina = min(8192, razmer)
+            nachalo = razmer - hvost_dlina
+            if nachalo % 2:            # встать на границу буквы
+                nachalo += 1
+            f.seek(nachalo)
+            hvost = f.read(razmer - nachalo)
+
+        def _stroka_v_datu(syrye: bytes):
+            try:
+                s = syrye.decode("utf-16-le", errors="ignore")
+            except Exception:
+                return None
+            s = s.strip().lstrip("\ufeff").strip("\x00").strip()
+            if not s:
+                return None
+            chasti = s.split(",")
+            if len(chasti) < 6:
+                return None
+            data = chasti[0].strip()
+            # у настоящего бара дальше идут числа — проверяем одно
+            try:
+                float(chasti[1])
+            except (ValueError, IndexError):
+                return None
+            return data or None
+
+        do_konca = _stroka_v_datu(pervaya)
+
+        posle = None
+        try:
+            hvost_tekst = hvost.decode("utf-16-le", errors="ignore")
+        except Exception:
+            hvost_tekst = ""
+        for stroka in reversed(hvost_tekst.split("\n")):
+            stroka = stroka.strip().lstrip("\ufeff").strip("\x00").strip()
+            if not stroka:
+                continue
+            chasti = stroka.split(",")
+            if len(chasti) < 6:
+                continue
+            try:
+                float(chasti[1])
+            except (ValueError, IndexError):
+                continue
+            posle = chasti[0].strip()
+            if posle:
+                break
+
+        if not do_konca or not posle:
+            return None
+
+        # строк с данными: переводы строк минус возможная пустая
+        # последняя. Точность до одной строки полке не важна, но
+        # заниженным числом пугать тоже не будем.
+        barov = max(1, perevodov)
+        return {"bars": barov, "date_from": do_konca, "date_to": posle}
+    except Exception as e:
+        print(f"[ПОЛКА] быстро не прочитал {getattr(p, 'name', p)} ({e}) — "
+              f"разберу полностью")
+        return None
+
+
 def page_torg(tseh_id: str = "торговый_хаос") -> None:
+    # OTPERET_V1: назвать цех столу СРАЗУ при входе в кабинет. Совет
+    # называет его сам, но до Совета стол успевает открыть тот, кто
+    # зовёт краном раньше — и запись уходила в общую тетрадь
+    # («[STATE] стол сохранён (общий)»).
+    try:
+        import hooks as _h_ceh
+        if hasattr(_h_ceh, "postavit_ceh"):
+            _h_ceh.postavit_ceh(tseh_id)
+    except Exception:
+        pass
     """Кабинет Совета Биржи — тот же, что был /exchange в -2."""
 
     static_prefix = "torg-static"
     roster = _build_roster(static_prefix)
 
     # ── состояние страницы (как было в ui_exchange.py) ──────────
-    state = {
+    _svezhee = {
         # POCHINIT_SOSTAV_V1: активным встаёт первый, кто реально есть
         # на диске. Состав собран строкой выше, поэтому берём прямо
         # здесь — раньше это стояло ДО создания state и роняло кабинет.
@@ -604,6 +959,8 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         "bars_to_live": 1,
         "stop_requested": False,
         "tester_running": False,
+        "kandidaty": [],            # ISKATEL_V1: найденные места
+        "kandidat_i": None,         # на каком стоим
         "learn": False,          # TORG_LEARN_SWITCH_V1: учебный прогон (якоря растут)
         "morj_last_run": None,
         "panic_last_run": None,
@@ -620,6 +977,14 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         "vahta_bar": "",
     }
 
+    # KABINET_ZHIVYOT_PRI_GORODE_V1: берём кабинет этого цеха, если он
+    # уже открыт был — тогда лента, полка и режим на месте. Первый
+    # раз — кладём свежий. Новые ключи (после патчей) доливаем, чтобы
+    # старый кабинет не падал на том, чего в нём ещё нет.
+    state = _KABINETY.setdefault(tseh_id, _svezhee)
+    for _k, _v in _svezhee.items():
+        state.setdefault(_k, _v)
+
     llm.set_model(state["model"])  # BIRZHA_MODEL_SEL_V1: применяем сразу при открытии кабинета
 
     def on_model_change(e):        # BIRZHA_MODEL_SEL_V1
@@ -629,6 +994,7 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
     chat_log_ref: dict[str, Any] = {"element": None}
     toolbar_refs: dict[str, Any] = {}
     viewer_ref:   dict[str, Any] = {"element": None}
+    vremya_ref:   dict[str, Any] = {"element": None}   # VREMYA_GORODA_V1
     kadr_ref:     dict[str, Any] = {"element": None}   # KABINET_GRAFIK_V1
     files_ref:    dict[str, Any] = {"element": None}
     avatar_ref:   dict[str, Any] = {"element": None}
@@ -638,6 +1004,7 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
     input_ref:    dict[str, Any] = {"element": None}
 
     ui.add_head_html(f"<style>{TORG_CSS}</style>")
+    ui.add_head_html("<style>" + _BELYY_SHRIFT + "</style>")   # BELYY_SHRIFT_V1
     _ceh0 = reg.get_ceh(tseh_id, KVARTAL)
     _bg_url = _building_bg_url(_ceh0.get("здание", "")) if _ceh0 else ""
     _bg_style = f" style=\"background-image:url('{_bg_url}');\"" if _bg_url else ""
@@ -645,6 +1012,20 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
 
     # ── чат ───────────────────────────────────────────────────
     def update_chat_display():
+        # PROGON_BEZ_OKNA_V1: вкладка могла умереть, пока прогон
+        # работает в фоне (связь моргнула, страница обновилась,
+        # компьютер уснул). NiceGUI на запись в мёртвого клиента
+        # бросает «Client has been deleted» и KeyError, и это роняло
+        # ВЕСЬ прогон. Лента в закрытой вкладке никому не видна —
+        # значит и падать из-за неё нельзя. Считаем дальше молча,
+        # отчёт всё равно пишется на диск.
+        try:
+            _risovat_chat()
+        except Exception as e:
+            print(f"[ПРОГОН] окно не принимает ленту ({e}) — "
+                  f"работаю молча, отчёт пишется на диск")
+
+    def _risovat_chat():
         if not chat_log_ref["element"]:
             return
         chat_log_ref["element"].clear()
@@ -652,7 +1033,19 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
             if not state["chat_history"]:
                 ui.html('<div class="chat-msg-system">SYSTEM: Биржа готова.</div>')
             else:
-                for msg in state["chat_history"]:
+                # LENTA_NE_ZABIVAET_BRAUZER_V1: рисуем ХВОСТ, а не
+                # всю ленту. Перерисовывать сотни сообщений с
+                # картинками раз в секунду — от этого браузер и
+                # рвал связь, а с ней умирала вкладка.
+                _vsya = state["chat_history"]
+                _hvost = _vsya[-LENTA_HVOST:]
+                _skryto = len(_vsya) - len(_hvost)
+                if _skryto > 0:
+                    ui.html(
+                        '<div class="chat-msg-system">SYSTEM: выше '
+                        f'ещё {_skryto} сообщ. — полная лента в '
+                        'отчёте на диске.</div>')
+                for msg in _hvost:
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
                     who = msg.get("agent", "")
@@ -660,6 +1053,159 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                         ui.html(f'<div class="chat-msg-user"><b>ШЕФ:</b> {content}</div>')
                     else:
                         ui.html(f'<div class="chat-msg-assistant"><b>{who}:</b> {content}</div>')
+                        # KADRY_V_CHATE_V1: под ответом — то, что он
+                        # видел. Панель одна и всегда про «сейчас»;
+                        # здесь картинки лежат рядом со словами и
+                        # больше не разъезжаются.
+                        # KADR_K_KLYUCHU_V1: в ленте картинок больше нет —
+                        # кадр показывается справа, один на побудку.
+                        # Все кадры места целы в папке отчёта и видны
+                        # на странице отчёта, там им и место.
+                        _kadry = []
+                        if _kadry:
+                            with ui.row().style(
+                                "gap:6px; flex-wrap:wrap; "
+                                "margin:2px 0 10px 10px;"
+                            ):
+                                for _i_k, _pk in enumerate(_kadry, 1):
+                                    try:
+                                        if not Path(_pk).exists():
+                                            continue
+                                        with ui.element("div").style(
+                                            "display:flex; "
+                                            "flex-direction:column; "
+                                            "align-items:center;"
+                                        ):
+                                            ui.image(str(_pk)).style(
+                                                "width:210px; "
+                                                "border-radius:6px; "
+                                                "border:1px solid "
+                                                "rgba(255,255,255,0.10); "
+                                                "cursor:pointer;").on(
+                                                "click",
+                                                lambda _=None, p=_pk:
+                                                    _kadr_krupno(p))
+                                            ui.label(f"кадр {_i_k}").style(
+                                                "color:rgba(255,255,255,0.35);"
+                                                "font-size:10px;")
+                                    except Exception:
+                                        continue
+
+    def _kadr_krupno(put: str):
+        """Клик по кадру в ленте — показать во весь экран."""
+        try:
+            # KADR_KRUPNO_V1: картинке нужна ШИРИНА. С одним
+            # max-width Quasar схлопывал её в иконку — кадр
+            # «не разворачивался», как ни щёлкай.
+            with ui.dialog() as _d, ui.card().style(
+                "background:#0d1117; padding:10px; width:96vw; "
+                "max-width:96vw;"
+            ):
+                ui.image(str(put)).style(
+                    "width:100%; height:auto; max-height:86vh; "
+                    "object-fit:contain;")
+                ui.button("закрыть", on_click=_d.close).props(
+                    "flat no-caps dense").style(
+                    "color:rgba(255,255,255,0.5); font-size:0.75rem;")
+            _d.open()
+        except Exception as _e:
+            print(f"[ЧАТ] кадр не открылся крупно ({_e})")
+
+    # KABINET_ZHIVYOT_PRI_GORODE_V1: лента сама догоняет.
+    # Прогон, начатый в другой вкладке (или до обновления страницы),
+    # держит ссылку на СТАРОЕ окно и в это уже не пишет. Раз в
+    # секунду смотрим, не выросла ли лента, и дорисовываем — тогда
+    # фоновый прогон снова виден на экране.
+    _lenta_vidno = {"skolko": -1}
+
+    def _dognat_lentu():
+        try:
+            n = len(state.get("chat_history") or [])
+            if n != _lenta_vidno["skolko"]:
+                _lenta_vidno["skolko"] = n
+                _risovat_chat()
+        except Exception:
+            pass
+
+    try:
+        ui.timer(1.0, _dognat_lentu)
+    except Exception as _e_tmr:
+        print(f"[КАБИНЕТ] лента не догоняет ({_e_tmr}) — не беда")
+
+    # ZHIVOY_KADR_V1: панель показывает ТО, НА ЧТО СМОТРИТ ТРЕЙДЕР.
+    # Раньше кадр всегда был про назначенный этаж места, а когда
+    # трейдер уходил руками на другой — Шеф этого не видел вовсе, и
+    # сверить его слова было не с чем. Тот же приём, что у ленты выше:
+    # раз в секунду смотрим на площадь города, не появился ли новый.
+    _zhivoy_vidno = {"put": None}
+
+    def _dognat_zhivoy_kadr():
+        try:
+            if not kadr_ref["element"]:
+                return
+            from hooks import load_trading_state
+            zk = (load_trading_state() or {}).get("zhivoy_kadr") or {}
+            put = zk.get("put")
+            if not put or put == _zhivoy_vidno["put"]:
+                return
+            p = Path(put)
+            if not p.exists():
+                return
+            _zhivoy_vidno["put"] = put
+            kadr_ref["element"].clear()
+            with kadr_ref["element"]:
+                ui.image(str(p)).style(
+                    "width:100%; height:100%; object-fit:contain; "
+                    "flex:1; min-height:0;")
+                _chey = zk.get("chey") or zk.get("slot") or "трейдер"
+                _pod = zk.get("podpis") or ""
+                ui.label(f"🖐 {_chey} смотрит рукой · {_pod}").style(
+                    "color:rgba(224,160,32,0.9); font-size:11px; "
+                    "letter-spacing:0.06em; padding-top:6px; "
+                    "flex-shrink:0; width:100%; text-align:center;")
+        except Exception:
+            pass
+
+    try:
+        ui.timer(1.0, _dognat_zhivoy_kadr)
+    except Exception as _e_zk:
+        print(f"[КАБИНЕТ] живой кадр не догоняет ({_e_zk}) — не беда")
+
+    # KADR_NE_TERYAETSYA_V1: кадр ПРОГОНА тоже догоняем.
+    # Прогон мог начаться в другой вкладке или до обновления
+    # страницы — он держит ссылку на старое окно и в это уже не
+    # пишет. Раз в секунду смотрим, не сменился ли кадр.
+    _kadr_progona_vidno = {"schet": -1}
+
+    def _dognat_kadr_progona():
+        try:
+            if not kadr_ref["element"]:
+                return
+            if _KADR_NA_VIDU["schet"] == _kadr_progona_vidno["schet"]:
+                return
+            _put = _KADR_NA_VIDU.get("put")
+            if not _put or not Path(_put).exists():
+                return
+            _kadr_progona_vidno["schet"] = _KADR_NA_VIDU["schet"]
+            kadr_ref["element"].clear()
+            with kadr_ref["element"]:
+                # METKA_VIDNA_V1: тот же щелчок и у догнанного кадра.
+                ui.image(str(_put)).style(
+                    "width:100%; height:100%; object-fit:contain; "
+                    "flex:1; min-height:0; cursor:pointer;").on(
+                    "click", lambda _=None, _q=str(_put): _kadr_krupno(_q))
+                ui.label(
+                    f"👁 {_KADR_NA_VIDU.get('podpis') or ''}").style(
+                    "color:rgba(139,233,253,0.75); font-size:11px; "
+                    "letter-spacing:0.06em; padding-top:6px; "
+                    "flex-shrink:0; width:100%; text-align:center;")
+        except Exception:
+            pass
+
+    try:
+        ui.timer(1.0, _dognat_kadr_progona)
+    except Exception as _e_kp:
+        print(f"[КАБИНЕТ] кадр прогона не догоняет ({_e_kp}) — не беда")
 
     # ── KABINET_GRAFIK_V1: кадр ──────────────────────────────
     def _aktivnyy_rynok() -> tuple:
@@ -682,21 +1228,345 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                     return s, tf
         except Exception:
             pass
-        return "XAUUSD", "H4"
+        # UBRAT_CHETVERTOGO_V1: выдуманного запасного «XAUUSD H4»
+        # больше нет. Это и был четвёртый инструмент при трёх
+        # трейдерах: ничей, никем не выбранный, а работали по нему
+        # все. Полка пуста — так и говорим, пустотой.
+        return "", ""
 
-    def pokazat_kadr(put=None):
-        """Рисует кадр и кладёт в верхнюю половину правой части.
+    # ── VZGLYAD_KAZHDOGO_V1: память полки и пара активного ──
+    def _klyuch_aktiva(a: dict) -> str:
+        """Имя строки полки. Номер строки для этого не годится:
+        ТЕРМИНАЛ кладёт свежее в НАЧАЛО списка, всё съезжает вниз, а
+        номер остаётся — и выбор указывает уже на чужую строку. Так и
+        получался вечный сброс на M15: он первый в опросе этажей."""
+        if not a:
+            return ""
+        return (f"{a.get('symbol', '')}|{a.get('timeframe', '')}"
+                f"|{a.get('источник', '')}")
 
-        Модель не трогаем: Шеф смотрит, трейдер спит. Это и есть
-        дешёвый способ проверить, читается ли картинка, ПЕРЕД тем как
-        отдавать её глазу.
+    def _zapomnit_vybor() -> str:
+        aktivy = state.get("loaded_assets") or []
+        i = state.get("active_asset")
+        if i is None or not (0 <= i < len(aktivy)):
+            return ""
+        return _klyuch_aktiva(aktivy[i])
+
+    def _vernut_vybor(klyuch: str, tiho: bool = False):
+        """Вернуть курсор на ту же строку после перестройки полки."""
+        aktivy = state.get("loaded_assets") or []
+        if not aktivy:
+            state["active_asset"] = None
+            return
+        if klyuch:
+            for j, a in enumerate(aktivy):
+                if _klyuch_aktiva(a) == klyuch:
+                    state["active_asset"] = j
+                    return
+            if not tiho:
+                ui.notify("⚠ прежний актив с полки ушёл — "
+                          "выбери заново", type="warning")
+                state["active_asset"] = None
+                return
+        if state.get("active_asset") is None:
+            state["active_asset"] = 0
+
+    def _para_aktivnogo() -> tuple:
+        """(инструмент, этаж, чей, чего не хватает) активного трейдера.
+
+        Взгляд принадлежит трейдеру, а не полке: у каждого свой
+        инструмент и свой этаж, и смотреть Шеф должен именно на его
+        картинку, иначе проверить его нечем.
+        """
+        aid = state.get("active_agent") or ""
+        imya = _agent_label(roster, aid) or aid
+        if aid not in ("A06", "A07", "A08"):
+            s, t = _aktivnyy_rynok()
+            if not s or not t:
+                return "", "", imya, "на полке ничего не выбрано"
+            return s, t, "", ""
+        try:
+            import vybor
+            r = vybor.rabota_dlya(tseh_id, aid)
+            if r.get("инструмент") and r.get("этаж"):
+                return r["инструмент"], r["этаж"], imya, ""
+            return "", "", imya, vybor.pochemu_molchit(tseh_id, aid)
+        except Exception as e:
+            return "", "", imya, f"пара не прочиталась ({e})"
+
+    # ── VREMYA_V_KABINETE_V1: шаг по истории ──────────────────
+    def _para_dlya_shaga() -> tuple:
+        """По чьему этажу шагаем. По активному трейдеру: у каждого
+        свой рабочий этаж, и шаг должен быть в его барах."""
+        s, t, _chey, _net = _para_aktivnogo()
+        if s and t:
+            return s, t
+        return _aktivnyy_rynok()
+
+    def _vremya_vid():
+        """Обновить надпись «стоим: …»."""
+        el = toolbar_refs.get("moment_label")
+        if el is None:
+            return
+        try:
+            import istoriya
+            m = istoriya.gde_stoim()
+        except Exception:
+            m = ""
+        el.text = f"стоим: {m}" if m else "конец истории"
+
+    def _kandidat_vid():
+        """Надпись «3/12» — на каком кандидате стоим."""
+        el = toolbar_refs.get("kand_label")
+        if el is None:
+            return
+        spisok = state.get("kandidaty") or []
+        i = state.get("kandidat_i")
+        if not spisok:
+            el.text = "—"
+        elif i is None:
+            el.text = f"0/{len(spisok)}"
+        else:
+            el.text = f"{i + 1}/{len(spisok)}"
+
+    async def _iskat_kandidatov():
+        """ISKATEL_V1: код пробегает историю и приносит места, где
+        стоит взглянуть. Бесплатно — это математика, не модель."""
+        if state.get("mode") != "tester":
+            ui.notify("Искать по истории можно в ТЕСТЕРЕ", type="warning")
+            return
+        symbol, tf = _para_dlya_shaga()
+        if not symbol or not tf:
+            ui.notify("Не пойму, где искать — выбери трейдера или актив",
+                      type="warning")
+            return
+        ui.notify(f"🔍 ищу по {symbol} {tf}…", type="info")
+        try:
+            import asyncio
+            import istoriya
+            ot = istoriya.gde_stoim()
+
+            def _rabota():
+                import kandidaty
+                return kandidaty.iskat(symbol, tf, do_momenta=ot,
+                                       skolko=12, govorit=print)
+
+            spisok = await asyncio.get_event_loop().run_in_executor(
+                None, _rabota)
+        except Exception as e:
+            ui.notify(f"Искать не вышло: {e}", type="negative")
+            return
+        state["kandidaty"] = spisok
+        state["kandidat_i"] = None
+        _kandidat_vid()
+        if not spisok:
+            ui.notify("Ничего не нашлось — отмотай назад и поищи ещё",
+                      type="warning")
+            return
+        ui.notify(f"🔍 нашёл {len(spisok)} мест — жми ⟩", type="positive")
+        _k_kandidatu(0)
+
+    def _k_kandidatu(nomer):
+        """Встать на кандидата: курсор истории туда, кадр перерисовать."""
+        spisok = state.get("kandidaty") or []
+        if not spisok:
+            ui.notify("Сперва найди кандидатов — кнопка 🔍", type="warning")
+            return
+        nomer = max(0, min(len(spisok) - 1, nomer))
+        k = spisok[nomer]
+        try:
+            import istoriya
+            istoriya.postavit(k.get("дата", ""))
+        except Exception as e:
+            ui.notify(f"Не встал: {e}", type="negative")
+            return
+        state["kandidat_i"] = nomer
+        _kandidat_vid()
+        _vremya_vid()
+        try:
+            # KADR_RISUETSYA_VEZDE_V1: pokazat_kadr асинхронная, а мы
+            # в обычной функции. Прямой вызов создаёт корутину и НЕ
+            # выполняет её — молча, без исключения. Ставим задачей.
+            import asyncio as _a
+            _a.get_event_loop().create_task(pokazat_kadr())
+        except Exception as e:
+            print(f"[ИСКАТЕЛЬ] кадр не перерисовался: {e}")
+        try:
+            import kandidaty as _kd
+            stroka = _kd.slovami(k)
+        except Exception:
+            stroka = k.get("дата", "")
+        print(f"[ИСКАТЕЛЬ] 📍 {nomer + 1}/{len(spisok)} · {stroka}")
+        ui.notify(f"📍 {stroka}", type="info")
+
+    def _kandidat_shag(kuda):
+        i = state.get("kandidat_i")
+        _k_kandidatu(0 if i is None else i + kuda)
+
+    def _razobrat_datu(s: str) -> str:
+        """PROGON_S_DATY_V1: понять дату, как её пишет человек.
+
+        Отдаём в том виде, в каком её держит история: «ГГГГ.ММ.ДД ЧЧ:ММ».
+        Не разобралась — возвращаем пусто, и прогон идёт от сегодня, как
+        и раньше. Ругаться на человека за формат мы не будем.
+        """
+        s = (s or "").strip().replace("-", ".").replace("/", ".")
+        if not s:
+            return ""
+        chasti = s.split()
+        d = chasti[0]
+        vremya = chasti[1] if len(chasti) > 1 else "00:00"
+        kuski = [k for k in d.split(".") if k]
+        if len(kuski) != 3:
+            print(f"[ПРОГОН] дату «{s}» не разобрал — иду от сегодня")
+            return ""
+        if len(kuski[0]) == 4:                 # 2026.04.28
+            god, mes, den = kuski
+        else:                                  # 28.04.2026
+            den, mes, god = kuski
+        if ":" not in vremya:
+            vremya = "00:00"
+        try:
+            god, mes, den = int(god), int(mes), int(den)
+            # DATY_PO_CHELOVECHESKI_V1: «2016.30.04» — тридцатый месяц.
+            # Раньше такое молча уходило в пустоту, и прогон шёл не
+            # туда, куда просили, ничего не сказав.
+            if not (1 <= mes <= 12 and 1 <= den <= 31):
+                raise ValueError(f"месяц {mes}, день {den}")
+            itog = f"{god:04d}.{mes:02d}.{den:02d} {vremya}"
+        except ValueError as _e:
+            print(f"[ПРОГОН] дату «{s}» не разобрал ({_e}) — иду от сегодня")
+            try:
+                ui.notify(f"дату «{s}» не понял — пишется "
+                          f"число.месяц.год", type="warning")
+            except Exception:
+                pass
+            return ""
+        print(f"[ПРОГОН] ищу места до {itog}")
+        return itog
+
+    def _shagnut(skolko):
+        """Шаг по истории. skolko=None — в конец (снять курсор)."""
+        if state.get("mode") != "tester":
+            ui.notify("Шаг по истории есть только в ТЕСТЕРЕ", type="warning")
+            return
+        symbol, tf = _para_dlya_shaga()
+        if not symbol or not tf:
+            ui.notify("Не пойму, по какому этажу шагать — "
+                      "выбери трейдера или актив слева", type="warning")
+            return
+        try:
+            import istoriya
+            if skolko is None:
+                istoriya.postavit("")
+                ui.notify("⏭ конец истории", type="info")
+            elif skolko == "начало":
+                pervyy, _ = istoriya.dokuda_est(symbol, tf)
+                if not pervyy:
+                    ui.notify(f"Нет истории {symbol} {tf} в test_data",
+                              type="warning")
+                    return
+                istoriya.postavit(pervyy)
+                ui.notify(f"⏮ {pervyy}", type="info")
+            else:
+                m = istoriya.shag(tf, int(skolko), symbol=symbol)
+                if not m:
+                    ui.notify(f"Нет истории {symbol} {tf} в test_data",
+                              type="warning")
+                    return
+        except Exception as e:
+            ui.notify(f"Шаг не вышел: {e}", type="negative")
+            return
+        _vremya_vid()
+        try:
+            # KADR_RISUETSYA_VEZDE_V1: то же самое — задачей, иначе
+            # корутина повиснет неисполненной и кадр останется прошлым.
+            import asyncio as _a
+            _a.get_event_loop().create_task(pokazat_kadr())
+        except Exception as e:
+            print(f"[ВРЕМЯ] кадр не перерисовался: {e}")
+
+    def _kadr_zhivoy() -> bool:
+        """KADR_BEZ_OKNA_V1: жива ли вкладка, в которую рисуем кадр.
+
+        Вкладка могла умереть, пока прогон работает в фоне. NiceGUI на
+        отрисовку в мёртвое окно НЕ бросает ошибку — он предупреждает и
+        валит в лог полный стек. Поэтому try/except тут бесполезен:
+        ловить нечего, надо спрашивать заранее.
+
+        Живого клиента NiceGUI держит в своём списке, умершего убирает.
+        Не смогли спросить — считаем живым и рисуем как раньше: молчать
+        без причины хуже, чем лишняя строчка в логе.
+        """
+        el = kadr_ref["element"]
+        if not el:
+            return False
+        try:
+            from nicegui import Client as _Cl
+            kl = getattr(el, "client", None)
+            if kl is None or not hasattr(_Cl, "instances"):
+                return True
+            return kl.id in _Cl.instances
+        except Exception:
+            return True
+
+    async def pokazat_kadr(put=None):
+        """Рисует кадр ПО ВЫБОРУ ШЕФА и кладёт направо.
+
+        VZGLYAD_PO_VYBORU_V1 (09.09, слово Шефа: «который просит — тот
+        и давать; я какой выбрал, тот и давать»).
+
+        Прежде кнопка была переведена с полки на трейдера
+        (VZGLYAD_KAZHDOGO_V1) по верному тогда резону: смотреть Шеф
+        должен на ЕГО картинку, иначе проверить его нечем. Но с тех
+        пор появился ЖИВОЙ КАДР — когда трейдер идёт руками на другой
+        этаж, панель сама показывает то, на что он смотрел, с
+        подписью. Задача решается сама и лучше: по факту, а не по
+        назначению.
+
+        Значит кнопка возвращается Шефу, и разделение выходит чистое:
+            живой кадр — что смотрит ТРЕЙДЕР;
+            «Взгляд»   — что выбрал ШЕФ.
+
+        Полка пуста — падаем на пару трейдера, чтобы кнопка не была
+        немой. Модель не трогаем: Шеф смотрит, трейдер спит.
         """
         if not kadr_ref["element"]:
             return None
-        symbol, tf = _aktivnyy_rynok()
+        # KADR_NE_TERYAETSYA_V1: раньше здесь был ранний выход —
+        # окно мертво, уходим. Из-за него кадр прогона пропадал
+        # бесследно. Теперь сперва рисуем и ЗАПОМИНАЕМ кадр, а
+        # проверка живости стоит ниже, у самой отрисовки.
+        # VZGLYAD_PO_VYBORU_V1: сперва спрашиваем ПОЛКУ.
+        symbol, tf, chey, nehvatka = "", "", "", ""
+        try:
+            _s_p, _t_p = _aktivnyy_rynok()
+        except Exception:
+            _s_p, _t_p = "", ""
+        if _s_p and _t_p:
+            symbol, tf, chey, nehvatka = _s_p, _t_p, "выбор Шефа", ""
+        else:
+            symbol, tf, chey, nehvatka = _para_aktivnogo()
+        if nehvatka:
+            kadr_ref["element"].clear()
+            with kadr_ref["element"]:
+                ui.label(f"👁 {chey}: смотреть нечего").style(
+                    "color:rgba(255,180,120,0.85); font-size:13px;")
+                ui.label(nehvatka).style(
+                    "color:rgba(255,255,255,0.55); font-size:11px;")
+            return None
         try:
             import grafik
-            p = Path(put) if put else grafik.kadr(symbol, tf)
+            if put:
+                p = Path(put)
+            else:
+                # POKAZAT_KADR_NE_VESHAET_SERVER_V1: тот же приём,
+                # что уже спасает progon_po_istorii — рисуем не в
+                # обработчике клика, а в фоновом потоке.
+                import asyncio
+                _loop = asyncio.get_event_loop()
+                p = await _loop.run_in_executor(
+                    None, grafik.kadr, symbol, tf)
         except Exception as e:
             ui.notify(f"⚠ кадр не нарисовался: {e}", type="negative")
             return None
@@ -704,14 +1574,66 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
             ui.notify("⚠ кадр не нарисовался (нет matplotlib или баров)",
                       type="warning")
             return None
+        # ZHIVOY_KADR_V1: Шеф смотрит сам — значит живой кадр трейдера
+        # больше не показываем поверх, пока трейдер не сходит рукой
+        # заново. Иначе таймер перерисует панель через секунду.
+        try:
+            from hooks import load_trading_state, save_trading_state
+            _t_zk = load_trading_state()
+            if _t_zk.get("zhivoy_kadr"):
+                _t_zk["zhivoy_kadr"] = {}
+            # VZGLYAD_DOHODIT_V1: то, что Шеф показал, должно дойти и
+            # до трейдера — иначе он отвечает про свою картинку, а
+            # спрашивают его про эту, и оба правы.
+            # STOP_I_VZGLYAD_V1: помечаем только то, что Шеф показал
+            # РУКОЙ. Раньше метка вешалась на любую отрисовку — и
+            # трейдеру, работающему на M5, досылался автоматический D1
+            # с подписью «показал Шеф». Графики не сходились.
+            if state.pop("взгляд_рукой", False):
+                try:
+                    from datetime import datetime as _dtv
+                    _t_zk["vzglyad_shefa"] = {
+                        "путь": str(put),
+                        "подпись": f"{symbol} {tf}",
+                        "когда": _dtv.now().isoformat(timespec="seconds"),
+                    }
+                except Exception:
+                    pass
+            save_trading_state(_t_zk)
+            _zhivoy_vidno["put"] = None
+        except Exception:
+            pass
+        # KADR_NE_TERYAETSYA_V1: запоминаем кадр ДО отрисовки.
+        # Даже если эта вкладка умерла — новая подхватит его
+        # таймером за секунду.
+        try:
+            _KADR_NA_VIDU["put"] = str(p)
+            _KADR_NA_VIDU["podpis"] = f"{chey + ' · ' if chey else ''}"\
+                                      f"{symbol} · {tf}"
+            _KADR_NA_VIDU["schet"] += 1
+        except Exception:
+            pass
+        # KADR_BEZ_OKNA_V1: вкладка умерла — рисовать некуда.
+        if not _kadr_zhivoy():
+            print("[ПРОГОН] окно не принимает кадр — "
+                  "кадр запомнен, новая вкладка подхватит")
+            return p
+        # рисуем сами — значит догонялке тут делать нечего
+        try:
+            _kadr_progona_vidno["schet"] = _KADR_NA_VIDU["schet"]
+        except Exception:
+            pass
         kadr_ref["element"].clear()
         with kadr_ref["element"]:
             # KADR_NA_VES_KVADRAT_V1: тянемся на всю клетку, но БЕЗ
             # плющенья — contain держит пропорции свечей. Плющеная
             # свеча врёт глазу, а глаз у нас важнее цифры.
+            # METKA_VIDNA_V1: щелчок по кадру — во весь экран.
+            # Показ уже готов, им живут миниатюры в ленте.
             ui.image(str(p)).style(
                 "width:100%; height:100%; object-fit:contain; "
-                "flex:1; min-height:0;")
+                "flex:1; min-height:0; cursor:pointer;").on(
+                "click", lambda _=None, _p=str(p): _kadr_krupno(_p))
             # KABINET_VZGLYAD_V1: подпись под кадром. Что смотрим и
             # каким краном — иначе глазом реал от истории не отличить.
             # KADR_NA_VES_KVADRAT_V1: плюс дата последнего бара —
@@ -720,12 +1642,15 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
             _kogda = ""
             try:
                 from feed_source import bars as _src_bars
-                _bs, _ = _src_bars(symbol, tf, 3)
+                _bs, _ = _src_bars(symbol, tf, 3)   # VZGLYAD_KAZHDOGO_V1
                 if _bs:
                     _kogda = f" · {str(_bs[-1].get('date', ''))[:16]}"
             except Exception:
                 pass
-            ui.label(f"👁 {symbol} · {tf} · {_kran}{_kogda}").style(
+            # VZGLYAD_KAZHDOGO_V1: чей это взгляд — теперь в подписи,
+            # иначе три разных кадра не отличить друг от друга.
+            _chey = f"{chey} · " if chey else ""
+            ui.label(f"👁 {_chey}{symbol} · {tf} · {_kran}{_kogda}").style(
                 "color:rgba(139,233,253,0.75); font-size:11px; "
                 "letter-spacing:0.06em; padding-top:6px; "
                 "flex-shrink:0; width:100%; text-align:center;")
@@ -1130,6 +2055,9 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
     # ── ТУМБЛЕР ТЕСТЕР/РЕАЛ + ПЕРЕБОР ИСТОРИИ + СТОП ─────────────
 
     def set_mode(mode: str):
+        # TUMBLER_V1: след в консоли. Если нажатие не доходит — здесь
+        # будет пусто, и станет ясно, что беда не в переключении.
+        print(f"[ТУМБЛЕР] нажали: {mode}")
         state["mode"] = mode
         try:
             from feed_source import set_feed_mode
@@ -1142,7 +2070,48 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         except Exception as _e:
             print(f"[TORG] feed_source не подключён: {_e}")
         is_tester = (mode == "tester")
+        # VREMYA_V_KABINETE_V1: ушли в РЕАЛ — снимаем курсор истории,
+        # иначе живой рынок останется стоять в прошлом и будет тихо
+        # показывать вчерашние бары как сегодняшние.
+        if not is_tester:
+            try:
+                import istoriya
+                if istoriya.gde_stoim():
+                    istoriya.postavit("")
+                    print("[ВРЕМЯ] курсор истории снят — вернулись в реал")
+            except Exception:
+                pass
+            # SNYAT_BAR_GORODA_V1: и бар города тоже. Кадр обрезается
+            # по полю `рынок.бар` (чтобы трейдер не подглядывал в
+            # будущее), но после прогона там остаётся его последний
+            # бар. Все бары живого рынка свежее — после обрезки не
+            # остаётся ни одного, и кадр не рисуется совсем:
+            #   «по бару города 2025.01.20 баров нет — кадра не будет»
+            # Курсор истории — другое поле, тумблер его снимал, а это
+            # лежало с прошлого раза.
+            # Защиту не отменяем: в прогоне бар города ставится заново
+            # на каждом шаге.
+            try:
+                from hooks import (load_trading_state as _lts_r,
+                                   save_trading_state as _sts_r)
+                _t_r = _lts_r() or {}
+                _ryn_r = dict(_t_r.get("рынок") or {})
+                if _ryn_r.get("бар"):
+                    _staryy_bar = _ryn_r.get("бар")
+                    _ryn_r["бар"] = ""
+                    _t_r["рынок"] = _ryn_r
+                    _sts_r(_t_r)
+                    print(f"[ВРЕМЯ] бар города снят ({_staryy_bar}) — "
+                          f"живой кадр больше не обрезается прошлым")
+            except Exception as _e_bg:
+                print(f"[ВРЕМЯ] бар города не снялся: {_e_bg}")
+        try:
+            _vremya_vid()
+        except Exception:
+            pass
         for key in ("bars_input", "stop_btn", "bars_label",
+                    "ot_daty_label", "ot_daty_input",   # PROGON_S_DATY_V1
+                    "po_datu_input",                    # TESTER_PULT_V2
                     "learn_btn"):   # TORG_LEARN_SWITCH_V1
 
             el = toolbar_refs.get(key)
@@ -1162,15 +2131,41 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                         "border:1px solid rgba(255,255,255,0.08);"
                     )
                 )
+        try:
+            from feed_source import get_feed_mode as _gfm
+            _kran = (_gfm() or {}).get("mode", "?")
+        except Exception as _e:
+            _kran = f"не спросить ({_e})"
+        print(f"[ТУМБЛЕР] режим встал: {mode} · кран {_kran}")
         ui.notify(f"Режим: {'ТЕСТЕР (история)' if is_tester else 'РЕАЛ (живой рынок)'}",
                   type="info")
 
     def request_stop():
+        # STOP_ZHYOSTKO_V1: первое нажатие — мягко, второе — бросаем.
+        # Прогон висит внутри вопроса к модели, поэтому мягкий стоп
+        # слышен только когда ответ вернётся. Второе нажатие не ждёт.
         if not state.get("tester_running"):
             ui.notify("Перебор не идёт", type="warning")
             return
+        if state.get("stop_requested"):
+            state["stop_hard"] = True
+            _pometit_stop_dlya_mozga(True)
+            ui.notify("⏹ БРОСАЮ — не жду текущий ответ", type="warning")
+            return
         state["stop_requested"] = True
-        ui.notify("⏸ СТОП — останавливаю на следующем кандидате...", type="info")
+        _pometit_stop_dlya_mozga(True)
+        ui.notify("⏸ СТОП — встану, как вернётся текущий ответ "
+                  "(нажми ещё раз, чтобы бросить сразу)", type="info")
+
+    def _pometit_stop_dlya_mozga(nado: bool):
+        """Мозг про кнопку не знает — кладём признак на общую площадь."""
+        try:
+            from hooks import load_trading_state, save_trading_state
+            _t = load_trading_state()
+            _t["стоп_прогона"] = bool(nado)
+            save_trading_state(_t)
+        except Exception as _e:
+            print(f"[СТОП] признак не лёг ({_e})")
 
     def toggle_learn():
         """TORG_LEARN_SWITCH_V1: УЧИТЬ — писать ли выводы из сделок в живых жителей.
@@ -1584,16 +2579,31 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         update_avatar_states()
         ui.notify(tail, type="positive" if not stopped else "warning")
 
+    sostav_ref: dict = {"element": None}
+
     def _vahta_vid():
-        """Вид кнопки: горит — стоим на вахте."""
+        """Вид кнопки: горит — стоим на вахте.
+
+        VAHTA_GORODSKAYA_V1: спрашиваем ГОРОДСКУЮ вахту, не окно. Зашёл
+        с другой страницы или из другого окна — кнопка всё равно
+        показывает правду.
+        """
         el = toolbar_refs.get("vahta_btn")
         ht = toolbar_refs.get("vahta_html")
         if el is None or ht is None:
             return
-        if state.get("vahta"):
+        if _VAHTA["идёт"]:
             el.style("background:rgba(0,204,255,0.15);color:#00ccff;"
-                     "border:1px solid rgba(0,204,255,0.45);")
+                     "border:1px solid rgba(0,204,255,0.45);"
+                     "white-space:nowrap;")
+            # PROSTO_I_ROVNO_V1: в подписи коротко, что сторожит — в
+            # подсказке и в строке состава под пузырьками.
             ht.content = "⏱ ВАХТА ●"
+            try:
+                el.tooltip(f'сторожу {_VAHTA["инструмент"]} '
+                           f'{_VAHTA["этаж"]}')
+            except Exception:
+                pass
         else:
             el.style("background:rgba(255,255,255,0.03);"
                      "color:rgba(255,255,255,0.45);"
@@ -1601,55 +2611,703 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
             ht.content = "⏱ ВАХТА"
 
     def _vahta_pereklyuchit():
-        state["vahta"] = not state.get("vahta")
-        # забываем, где стояли: включаем — начинаем считать заново
-        state["vahta_bar"] = ""
-        _vahta_vid()
-        if state["vahta"]:
-            _s, _t = _aktivnyy_rynok()
-            ui.notify(f"⏱ вахта: жду новую свечу {_s} {_t}", type="info")
-        else:
+        if _VAHTA["идёт"]:
+            _VAHTA.update({"идёт": False, "бар": ""})
+            _vahta_vid()
             ui.notify("⏱ вахта снята", type="info")
-
-    def _posledniy_bar(symbol: str, tf: str) -> str:
-        """Время последнего бара по тому же крану, что и кадр."""
-        try:
-            from feed_source import bars as _src_bars
-            _bs, _ = _src_bars(symbol, tf, 3)
-            if _bs:
-                return str(_bs[-1].get("date", ""))
-        except Exception:
-            pass
-        return ""
-
-    async def _vahta_tik():
-        """Раз в двадцать секунд: не сменилась ли свеча.
-
-        VAHTA_NOVAYA_SVECHA_V1. Первый тик только запоминает бар —
-        иначе Совет дёргался бы посреди уже начатой свечи. В тестере
-        молчим: там время идёт из файла, а не из жизни.
-        """
-        if not state.get("vahta") or state.get("running"):
+            print("[ВАХТА] ⏹ снята")
             return
         if state.get("mode") == "tester":
+            ui.notify("⏱ в тестере вахта не нужна — там время из файла",
+                      type="warning")
             return
         _s, _t = _aktivnyy_rynok()
-        _bar = _posledniy_bar(_s, _t)
-        if not _bar:
+        # UBRAT_CHETVERTOGO_V1: вахта — это ДЕЖУРСТВО, будильник. По
+        # какой свече звонить — берём с полки, как и раньше; но
+        # разбуженные работают КАЖДЫЙ СВОИМ, а не тем, что на полке.
+        # Полка пуста — дежурить не по чему, честно откажемся.
+        if not _s or not _t:
+            ui.notify("⏱ выбери слева, по какой свече дежурить",
+                      type="warning")
             return
-        if not state.get("vahta_bar"):
-            state["vahta_bar"] = _bar
+        # EDINYY_VYBOR_V1: встать на вахту — это и есть выбор.
+        # Пишем в экран, чтобы трейдер и кадр поехали туда же.
+        try:
+            import ekran as _ekr
+            _ekr.postavit(_s, _t, kto="Шеф", pochemu="встал на вахту")
+        except Exception as _e_ekr:
+            print(f"[ВАХТА] экран не записался ({_e_ekr})")
+        _VAHTA.update({"идёт": True, "инструмент": _s, "этаж": _t,
+                       "бар": "", "цех": tseh_id})
+        _vahta_zavesti()
+        _vahta_vid()
+        if _VAHTA_ZAVEDENA:
+            ui.notify(f"⏱ вахта: сторожу {_s} {_t}. Идёт, пока поднят "
+                      f"город — окно можно закрыть", type="info")
+        else:
+            # VAHTA_ZAVEDI_LYUBOY_V1: не завелась — так и скажем, а не
+            # оставим гореть кнопку впустую.
+            _VAHTA["идёт"] = False
+            _vahta_vid()
+            ui.notify("⚠ вахта не завелась — смотри чёрное окно. "
+                      "Пока жми РЫНОК руками.", type="negative")
+        print(f"[ВАХТА] ▶ стою на {_s} {_t}")
+
+    # VAHTA_GORODSKAYA_V1: комнатный тик убран — вахту несёт город
+    # (см. _vahta_sluzhba наверху файла). Здесь осталась только
+    # синхронизация кнопки при заходе на страницу.
+
+    async def progon_po_istorii():
+        """ODNA_KNOPKA_V1: весь тестер в одной кнопке.
+
+        Раньше здесь был пульт из стрелок, а до него — tester_express
+        на упразднённой Искре. Теперь: код ищет места, город встаёт в
+        каждое, трейдер говорит. Шеф только читает ленту.
+        """
+        if state.get("tester_running"):
+            ui.notify("Прогон уже идёт", type="warning")
             return
-        if _bar == state["vahta_bar"]:
+        try:
+            import istoriya
+            import kandidaty as _kd
+            import vybor
+        except Exception as e:
+            ui.notify(f"Прогон недоступен: {e}", type="negative")
             return
-        state["vahta_bar"] = _bar
-        ui.notify(f"🔔 новая свеча {_s} {_t} · {_bar[:16]} — смотрю",
-                  type="positive")
-        await market_dispatch()
+
+        # кто может работать: у кого есть и инструмент, и этаж
+        # PARA_PO_POSTU_V1: пара приходит из ПОСТА каждого, и ниоткуда
+        # больше. Подмены с полки здесь БОЛЬШЕ НЕТ: пока на Бирже сидел
+        # один человек, она выглядела разумной, а на двоих согнала обоих
+        # на один инструмент — 24.08 Илья и Нина пошли по евро, хотя у
+        # Нины в посте золото. Для сравнения двух трейдеров это срыв
+        # самой затеи: они должны идти по своей паре, а не по той, что
+        # кабинет молча выбрал за них.
+        #
+        # Полка слева снова только то, ЧТО СМОТРИШЬ. Нужен общий рынок
+        # для сравнения — пропиши обоим одну пару в постах.
+        _podmena = ""
+        rabotniki = []
+        for _sl in ("A06", "A07", "A08"):
+            r = vybor.rabota_dlya(tseh_id, _sl)
+            if r.get("готов"):
+                rabotniki.append((_sl, r["инструмент"], r["этаж"]))
+            else:
+                print(f"[ПРОГОН] {_sl} не участвует: "
+                      f"{vybor.pochemu_molchit(tseh_id, _sl)}")
+        if not rabotniki:
+            ui.notify("Некому работать: ни у кого нет инструмента и этажа",
+                      type="warning")
+            return
+
+        # TESTER_PULT_V1: «ловить N» — это ПРЕДЕЛ ПО СРАБАТЫВАНИЯМ, а
+        # не по барам. Бар город считает даром, а вопрос трейдеру стоит
+        # денег, и считать надо оплаченные взгляды. 0 или пусто — без
+        # предела, идём весь отрезок.
+        try:
+            skolko = int(state.get("bars_to_live") or 0)
+        except (TypeError, ValueError):
+            skolko = 0
+        _ot_daty = _razobrat_datu(state.get("progon_ot_daty") or "")
+        _po_datu = _razobrat_datu(state.get("progon_po_datu") or "")
+        if _ot_daty and _po_datu and _po_datu < _ot_daty:
+            _ot_daty, _po_datu = _po_datu, _ot_daty
+            print("[ПРОГОН] даты стояли задом наперёд — поменял местами")
+        # OTCHYOT_PROGONA_V1: заводим папку прогона — туда лягут
+        # таблица, строки машиной и кадр КАЖДОГО места.
+        try:
+            import otchyot as _ot
+            _otchyot = _ot.Otchyot(Path(__file__).resolve().parent.parent,
+                                   tseh_id)
+        except Exception as _e:
+            _otchyot = None
+            print(f"[ОТЧЁТ] не завёлся ({_e}) — прогон пойдёт без записи")
+        # LOG_PROGONA_SYROY_V1: дублируем весь вывод в лог.txt рядом
+        # с отчётом — без фильтров, чтобы после прогона не бегать по
+        # терминалу за тем, что там мелькнуло и пропало.
+        _original_stdout = sys.stdout
+        _log_fayl_progona = None
+        if _otchyot is not None:
+            try:
+                _log_fayl_progona = open(_otchyot.papka / "лог.txt", "a",
+                                          encoding="utf-8")
+                sys.stdout = _TeeVyvod(_original_stdout, _log_fayl_progona)
+            except Exception as _e_log:
+                print(f"[ЛОГ] файл прогона не завёлся ({_e_log}) — иду "
+                      f"без него")
+        state["tester_running"] = True
+        state["stop_requested"] = False
+        state["stop_hard"] = False          # STOP_ZHYOSTKO_V1
+        _pometit_stop_dlya_mozga(False)
+        _bylo_moment = ""
+        # CHISTYY_START_PROGONA_V1: новый прогон — чистый стол.
+        # «Последнее закрытие» и позиции прошлого прогона будили
+        # трейдера чужими событиями на тех же барах.
+        try:
+            from hooks import load_trading_state as _lts0
+            from hooks import save_trading_state as _sts0
+            _t0 = _lts0()
+            _bylo_z = _t0.pop("последнее_закрытие", None)
+            # живые (mode=live) не трогаем — только прошлые прогоны
+            _vse0 = _t0.get("positions") or []
+            _zhivye0 = [p for p in _vse0
+                        if str(p.get("mode") or "").lower() == "live"]
+            _bylo_p = len(_vse0) - len(_zhivye0)
+            if _bylo_p:
+                _t0["positions"] = _zhivye0
+            if _bylo_z is not None or _bylo_p:
+                _sts0(_t0)
+                print(f"[ПРОГОН] 🧹 чистый стол: прошлое закрытие "
+                      f"{'стёрто' if _bylo_z is not None else 'не было'}"
+                      f", позиций/заявок прошлого прогона снято: {_bylo_p}")
+        except Exception as _e_ch:
+            print(f"[ПРОГОН] почистить стол не вышло ({_e_ch})")
+        try:
+            _bylo_moment = istoriya.gde_stoim()
+        except Exception:
+            pass
+
+        state["chat_history"].append({
+            "role": "system",
+            "content": (f"▶ ПРОГОН ПО ИСТОРИИ · {len(rabotniki)} "
+                        f"трейдер(ов)"
+                        # PARA_PO_POSTU_V1: у каждого своя пара — пишем
+                        # их все, чтобы сразу видеть, кто чем гонит.
+                        + " · " + ", ".join(f"{_s}:{_sy} {_tf2}"
+                                            for _s, _sy, _tf2 in rabotniki)
+                        + (f" · с {_ot_daty}" if _ot_daty else "")
+                        + (f" · по {_po_datu}" if _po_datu else "")
+                        + (f" · ловлю {skolko} срабатывани(й)"
+                           if skolko else " · до конца отрезка"))})
+        update_chat_display()
+        ui.notify("🔍 ищу места в истории…", type="info")
+
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        # 1. PROGON_PODRYAD_V1: идём по истории ПОДРЯД, бар за баром.
+        # Слово Шефа: «есть история — прогнал, посмотрел реально».
+        # Раньше здесь работал искатель: прыгал по своим «местам» от
+        # свежих к старым и половину отсеивал рамкой и трендом. Город
+        # видел не историю, а выборку, собранную нашими же правилами, —
+        # такая проверка проверяет только саму себя.
+        #
+        # Теперь: с даты пусто — последний год; задана — с неё до конца
+        # данных. Каждый бар город считает сам, молча и даром. Трейдера
+        # зовут только на открытом ключе.
+        mesta = []
+        for _sl, _sym, _tf in rabotniki:
+            try:
+                _vse = await loop.run_in_executor(
+                    None, lambda s=_sym, t=_tf: istoriya._vse_bary(s, t))
+            except Exception as e:
+                print(f"[ПРОГОН] {_sl}: история не открылась — {e}")
+                continue
+            if not _vse:
+                continue
+            _daty = [b.get("date", "") for b in _vse]
+            if _ot_daty:
+                _s = next((j for j, d in enumerate(_daty)
+                           if d >= _ot_daty), None)
+                if _s is None:
+                    print(f"[ПРОГОН] {_sl}: после {_ot_daty} баров нет")
+                    continue
+            else:
+                # год назад: на H4 это около 1500 баров, на D1 — 250.
+                # Берём по числу баров, а не по календарю: файл может
+                # кончаться раньше сегодняшнего дня.
+                _v_godu = {"MN1": 12, "W1": 52, "D1": 252, "H12": 500,
+                           "H8": 750, "H4": 1500, "H1": 6000}.get(
+                               str(_tf).upper(), 1500)
+                _s = max(0, len(_daty) - _v_godu)
+            _s = max(_s, 300)          # ядру нужно окно на разгон
+            # TESTER_PULT_V1: верхняя граница отрезка. Раньше её не
+            # было вовсе — от даты и до конца файла, вырезать кусок
+            # истории было нечем.
+            _e = len(_daty)
+            if _po_datu:
+                _e = next((j for j, d in enumerate(_daty) if d > _po_datu),
+                          len(_daty))
+                if not _ot_daty:
+                    # Год отсчитываем НАЗАД ОТ верхней границы, а не от
+                    # конца файла: иначе «только по дату» давало пустой
+                    # отрезок — нижняя граница оказывалась позже верхней.
+                    _s = max(0, _e - _v_godu)
+            _s = max(_s, 300)          # ядру нужно окно на разгон
+            if _e <= _s:
+                print(f"[ПРОГОН] {_sl}: между {_ot_daty or 'началом'} и "
+                      f"{_po_datu} баров нет")
+                continue
+            for j in range(_s, _e):
+                mesta.append((_daty[j], _sl, _sym, _tf,
+                              {"дата": _daty[j], "подряд": True}))
+            print(f"[ПРОГОН] {_sl}: {_sym} {_tf} — "
+                  f"{_e - _s} баров, "
+                  f"с {_daty[_s]} по {_daty[_e - 1]}")
+
+        if not mesta:
+            state["tester_running"] = False
+            # DATY_PO_CHELOVECHESKI_V1: «пусто» само по себе врёт —
+            # похоже, будто сломан прогон. Чаще всего история просто
+            # в другом отрезке. Говорим, какая она есть.
+            _skazat = "Ничего не нашлось в истории — пусто."
+            try:
+                _kraya = []
+                from feed_source import bars as _src_bars
+                for _sl2, _s2, _t2 in rabotniki:
+                    _v2, _ = _src_bars(_s2, _t2, 0)
+                    if _v2:
+                        _kraya.append(f"{_s2} {_t2}: история с "
+                                      f"{_v2[0].get('date', '?')} по "
+                                      f"{_v2[-1].get('date', '?')}")
+                if _kraya:
+                    _zadano = (state.get("progon_ot_daty") or "").strip()
+                    _do = (state.get("progon_po_datu") or "").strip()
+                    _otrez = (f" Задан отрезок {_zadano or 'с начала'} → "
+                              f"{_do or 'до конца'}.")
+                    _skazat = ("В заданном отрезке баров нет. " +
+                               " · ".join(_kraya) + "." + _otrez)
+            except Exception:
+                pass
+            state["chat_history"].append({
+                "role": "system", "content": _skazat})
+            update_chat_display()
+            ui.notify("Мест не нашлось", type="warning")
+            return
+
+        # от старых к свежим — как шло время
+        mesta.sort(key=lambda x: x[0])
+        state["chat_history"].append({
+            "role": "system",
+            # PROGON_PODRYAD_V2: подряд — это бары, а не места.
+            "content": (f"Иду по истории: {len(mesta)} баров."
+                        if mesta and mesta[0][4].get("подряд")
+                        else f"Нашёл {len(mesta)} мест. Иду по ним.")})
+        update_chat_display()
+
+        # 2. по каждому месту: встать туда и спросить того, чьё оно
+        proydeno = 0
+        _razbudili = 0          # TESTER_PULT_V1: оплаченных взглядов
+        try:
+            for data, _sl, _sym, _tf, k in mesta:
+                # STOP_I_VZGLYAD_V1: передышка для интерфейса. Без неё
+                # на сплошном ходу цикл не отпускает поток, нажатие
+                # СТОП не успевает обработаться — и прогон идёт дальше,
+                # хотя проверка флага стоит прямо ниже.
+                await asyncio.sleep(0)
+                if state.get("stop_hard"):   # STOP_ZHYOSTKO_V1
+                    stopped = True
+                    break
+                if state.get("stop_requested"):
+                    state["chat_history"].append({
+                        "role": "system", "content": "⏸ остановлено"})
+                    update_chat_display()
+                    break
+                # BUDIM_NA_SVOYOM_BARE_V1: курсор — на момент ЗАКРЫТИЯ
+                # бара места, а не на его начало. Машина времени отдаёт
+                # только закрытое: поставь курсор на начало — и сам бар
+                # события окажется «ещё идущим», город возьмёт
+                # предыдущий, а трейдера разбудят ДО того, как некрон
+                # сформировался. Отсюда и его вечное «жду ещё бар».
+                istoriya.postavit(_moment_zakrytiya(data, _tf))
+                # PROGON_PODRYAD_V1: на сплошном ходу считаем сами и
+                # смотрим ключ. Закрыт — идём дальше молча и даром.
+                if k.get("подряд"):
+                    try:
+                        def _tiho(s=_sym, t=_tf, sl=_sl):
+                            import hooks as _h2
+                            _h2.rynok_novyy_bar(s, t)
+                            return __import__("council")._klyuch_probuzhdeniya(
+                                s, t, sl)
+                        _kk = await loop.run_in_executor(None, _tiho)
+                    except Exception as _ek:
+                        print(f"[ПРОГОН] ключ не прочёлся: {_ek}")
+                        _kk = {"будим": False}
+                    if not _kk.get("будим"):
+                        continue
+                    k = dict(k)
+                    k["почему"] = _kk.get("почему", "")
+                    # TESTER_PULT_V1: вот оно, настоящее срабатывание —
+                    # ключ открылся, сейчас трейдера спросят. Считаем
+                    # здесь, а не по барам: платим мы за вопросы.
+                    _razbudili += 1
+                # TOCHKA_NE_TASHCHITSYA_V1: прогон прыгнул в другой
+                # момент истории — точка с прошлого места сюда не
+                # едет. Иначе она формально жива, заново не рождается,
+                # и ключ молчит на честном разворотнике.
+                #
+                # KONEC_VOLNY_NE_SYEDEN_V1: но только на ПРЫЖКАХ. На
+                # сплошном ходу чистка стояла здесь же и стирала
+                # ячейку точки сразу после того, как молчаливый шаг
+                # нашёл конец первой волны, — вместе с отметкой и с
+                # защитой «один бар — одно решение». Совет судил тот же
+                # бар начисто, тот же разворотник читался уже как новая
+                # точка, и трейдеру говорили «точка родилась» вместо
+                # «волна 1 кончилась». За год событие случилось дважды
+                # и оба раза было съедено; а откат считается ОТ этой
+                # отметки, значит третьего события не бывало вовсе.
+                #
+                # Сплошной прогон не прыгает: он идёт баром за баром,
+                # как живой город, и точка обязана жить между барами.
+                if not k.get("подряд"):
+                    try:
+                        import hooks as _h
+                        _h.zabyt_tochku(_sym, _tf)
+                    except Exception as _ez:
+                        print(f"[ПРОГОН] точку забыть не вышло: {_ez}")
+                imya = _agent_label(roster, _sl) or _sl
+                # PROGON_VIDNO_V1: кадр рисуем ОДИН раз и В ФОНЕ.
+                # Раньше он рисовался в главном потоке, да ещё дважды
+                # на место (для экрана и для отчёта) — matplotlib на
+                # секунды вешал сервер, и браузер обрывал связь:
+                # «Connection lost». Одна картинка идёт и на экран,
+                # и в отчёт.
+                _kadr = None
+                try:
+                    _kadr = await loop.run_in_executor(
+                        None, lambda s=_sym, t=_tf: __import__(
+                            "grafik").kadr(s, t))
+                except Exception as _ek:
+                    print(f"[ПРОГОН] кадр не нарисовался: {_ek}")
+                # KADR_PRYAMO_V_PAMYAT_V1: кладём кадр в общую
+                # память СРАЗУ, до всякого показа. pokazat_kadr —
+                # функция того окна, где прогон начинался; после
+                # перезагрузки страницы она уводит кадр в никуда,
+                # и делает это молча. Общая память ни от какого
+                # окна не зависит: любая живая вкладка подберёт
+                # кадр своим таймером за секунду.
+                if _kadr:
+                    try:
+                        _KADR_NA_VIDU["put"] = str(_kadr)
+                        _KADR_NA_VIDU["podpis"] = f"{_sym} · {_tf}"
+                        _KADR_NA_VIDU["schet"] += 1
+                        print(f"[КАДР] в панель: "
+                              f"{Path(_kadr).name}")
+                    except Exception as _ep:
+                        print(f"[КАДР] в панель не лёг: {_ep}")
+                try:
+                    await pokazat_kadr(_kadr)
+                except Exception:
+                    pass
+                # PODPIS_PO_BARU_GORODA_V1: подписываем баром, на
+                # котором город стоит НА САМОМ ДЕЛЕ. Дата места —
+                # это бар, где признак стал ВИДЕН, она на шаг вперёд,
+                # и из-за неё казалось, будто кадр отстаёт.
+                _podpis_bar = data
+                _hvost_mesta = ""
+                try:
+                    from hooks import load_trading_state as _lts_p
+                    _bg = str(((_lts_p() or {}).get("рынок") or {})
+                              .get("бар") or "")
+                    if _bg:
+                        _podpis_bar = _bg
+                        if str(data) and str(data) != _bg:
+                            _hvost_mesta = f" (место найдено на {data})"
+                except Exception:
+                    pass
+
+                state["chat_history"].append({
+                    "role": "system",
+                    # PROGON_PODRYAD_V2: на сплошном ходу говорим, ЧТО
+                    # случилось на баре, а не «разворотный None @ None».
+                    "content": (f"📍 {_podpis_bar}{_hvost_mesta} · "
+                                f"{k.get('почему')} → спрашиваю {imya}"
+                                if k.get("подряд")
+                                else f"📍 {_podpis_bar}{_hvost_mesta} · "
+                                     f"{_kd.slovami(k)} → спрашиваю {imya}")})
+                update_chat_display()
+
+                def _zvat():
+                    import council
+                    return council.wake_council("", "", ceh_id=tseh_id)
+
+                try:
+                    itog = await loop.run_in_executor(None, _zvat)
+                except Exception as e:
+                    print(f"[ПРОГОН] Совет сорвался на {data}: {e}")
+                    continue
+                proydeno += 1
+
+                r = (itog.get("results") or {}).get(_sl) or {}
+                skazal = (r.get("narrative") or "").strip()
+                if not skazal and r.get("error"):
+                    skazal = f"(промолчал: {r['error']})"
+                # OTCHYOT_PROGONA_V1: кадр этого места — в папку прогона,
+                # рядом со строкой. Раньше все кадры валились в общую
+                # кучу, и найти картинку к месту было нельзя.
+                if _otchyot is not None:
+                    try:
+                        _otchyot.zapisat(k, _sl, imya, _sym, _tf, r, _kadr)
+                    except Exception as _e:
+                        print(f"[ОТЧЁТ] место не записалось: {_e}")
+                # KADRY_V_CHATE_V1: забираем всё, что он видел за этот
+                # вопрос, и вешаем на сообщение. Список чистим, чтобы
+                # следующему ответу достались только его кадры.
+                _kadry_otveta = []
+                try:
+                    from hooks import (load_trading_state as _lts_k,
+                                       save_trading_state as _sts_k)
+                    _tk = _lts_k()
+                    _kadry_otveta = list(_tk.get("кадры_ответа") or [])
+                    if _kadry_otveta:
+                        _tk["кадры_ответа"] = []
+                        _sts_k(_tk)
+                except Exception as _e_k:
+                    print(f"[ЧАТ] кадры ответа не забрались ({_e_k})")
+                if _kadr and str(_kadr) not in _kadry_otveta:
+                    _kadry_otveta.insert(0, str(_kadr))
+
+                state["chat_history"].append({
+                    "role": "assistant", "agent": _sl,
+                    "content": skazal or "(без текста)",
+                    "кадры": _kadry_otveta})
+                update_chat_display()
+                # TESTER_PULT_V1: предел по срабатываниям. Проверяем
+                # ПОСЛЕ ответа, чтобы последний взгляд был договорён до
+                # конца, а не обрезан на полуслове.
+                if skolko and _razbudili >= skolko:
+                    state["chat_history"].append({
+                        "role": "system",
+                        "content": (f"⏹ поймано {_razbudili} "
+                                    f"срабатывани(й) — предел, "
+                                    f"останавливаюсь")})
+                    update_chat_display()
+                    break
+
+                # ── PROGON_VPERYOD_V1 ────────────────────────
+                # Слово Шефа: «в чём разница факта? что на истории он
+                # есть, что на реале — появилось, наблюдает, дошло,
+                # вошла». Прогон прыгал через месяцы не потому, что
+                # история такая, а потому что я его таким сделал.
+                # Теперь: трейдер взял на карандаш — шагаем ВПЕРЁД по
+                # одному настоящему бару и спрашиваем снова, пока он
+                # наблюдает. Граница — дата следующего места: дальше
+                # начинается своя точка, старую наблюдать не за чем.
+                _sled = None
+                try:
+                    _i_tek = mesta.index((data, _sl, _sym, _tf, k))
+                    if _i_tek + 1 < len(mesta):
+                        _sled = mesta[_i_tek + 1][0]
+                except Exception:
+                    _sled = None
+                # PROGON_PODRYAD_V2: на сплошном ходу шаги вперёд не
+                # нужны — мы и так идём по каждому бару. Раньше два
+                # способа ходить работали разом, курсор уезжал вперёд,
+                # а внешний цикл продолжал из прошлого: время в ленте
+                # ехало назад, точки рождались по два раза.
+                while not k.get("подряд"):
+                    if state.get("stop_requested"):
+                        break
+                    try:
+                        import hooks as _h
+                        if not _h.nablyudenie(_sym, _tf, _sl):
+                            break
+                        # PROGON_POSLE_SLOMA_V1: точка ушла — наблюдать
+                        # больше не за чем, идём к следующему месту.
+                        # Правило ТОЛЬКО для прогона: там следующее
+                        # место известно заранее. В живом городе
+                        # наблюдение снимает сам трейдер, и никто иной.
+                        _tt = _h._blok_tochki(_h.load_trading_state(),
+                                              _h._para_tochki(_sym, _tf))
+                        if not _tt.get("alive"):
+                            _h.snyat_nablyudenie(_sym, _tf, _sl,
+                                                 "точка ушла")
+                            state["chat_history"].append({
+                                "role": "system",
+                                "content": "✕ точка ушла — иду к "
+                                           "следующему месту"})
+                            update_chat_display()
+                            break
+                    except Exception as _en:
+                        print(f"[ПРОГОН] наблюдение не прочлось: {_en}")
+                        break
+                    try:
+                        _bylo = istoriya.gde_stoim()
+                        _stalo = istoriya.shag(_tf, 1, _sym)
+                    except Exception as _esh:
+                        print(f"[ПРОГОН] шаг вперёд не вышел: {_esh}")
+                        break
+                    if not _stalo or _stalo == _bylo:
+                        print("[ПРОГОН] история кончилась — иду дальше")
+                        break
+                    if _sled and _stalo >= _sled:
+                        print("[ПРОГОН] дошёл до следующего места — "
+                              "наблюдение закрываю")
+                        try:
+                            _h.snyat_nablyudenie(_sym, _tf, _sl,
+                                                 "дошли до следующего места")
+                        except Exception:
+                            pass
+                        break
+                    # KONEC_VOLNY_1_V1: шагаем МОЛЧА. Рука рынка — код,
+                    # не модель: ведёт точку и ищет конец первой волны
+                    # бесплатно. Ключ закрыт — идём дальше даром.
+                    try:
+                        # SVYAZ_I_PAPKA_V1: молчаливый шаг — в рабочий
+                        # поток. Раньше он считал приборы прямо в
+                        # корутине и подмораживал окно на каждом баре.
+                        def _schitat(s=_sym, t=_tf, sl=_sl):
+                            import hooks as _hh2
+                            _hh2.rynok_novyy_bar(s, t)
+                            return __import__("council")._klyuch_probuzhdeniya(
+                                s, t, sl)
+                        _kk = await loop.run_in_executor(None, _schitat)
+                    except Exception as _ekl:
+                        print(f"[ПРОГОН] ключ не прочёлся: {_ekl}")
+                        _kk = {"будим": True, "почему": "ключ не прочёлся"}
+                    if not _kk.get("будим"):
+                        continue
+                    state["chat_history"].append({
+                        "role": "system",
+                        "content": f"👁 {_stalo} · {_kk.get('почему')} "
+                                   f"→ спрашиваю {imya}"})
+                    update_chat_display()
+                    _kadr = None
+                    try:
+                        _kadr = await loop.run_in_executor(
+                            None, lambda s=_sym, t=_tf: __import__(
+                                "grafik").kadr(s, t))
+                    except Exception as _ek:
+                        print(f"[ПРОГОН] кадр не нарисовался: {_ek}")
+                    try:
+                        # PROGON_BEZ_OKNA_V1: показать — дело окна,
+                        # а его может уже не быть. Кадр всё равно
+                        # сохранён и попадёт в отчёт.
+                        await pokazat_kadr(_kadr)
+                    except Exception as _ep:
+                        print(f"[ПРОГОН] кадр не показан ({_ep}) — "
+                              f"он в отчёте")
+                    try:
+                        itog = await loop.run_in_executor(None, _zvat)
+                    except Exception as e:
+                        print(f"[ПРОГОН] Совет сорвался на {_stalo}: {e}")
+                        break
+                    r = (itog.get("results") or {}).get(_sl) or {}
+                    skazal = (r.get("narrative") or "").strip()
+                    if not skazal and r.get("error"):
+                        skazal = f"(промолчал: {r['error']})"
+                    if _otchyot is not None:
+                        try:
+                            _otchyot.zapisat(k, _sl, imya, _sym, _tf, r,
+                                             _kadr)
+                        except Exception as _e:
+                            print(f"[ОТЧЁТ] шаг не записался: {_e}")
+                    state["chat_history"].append({
+                        "role": "assistant", "agent": _sl,
+                        "content": skazal or "(без текста)"})
+                    update_chat_display()
+                # PROGON_VIDNO_V1: и в ОТЧЁТ справа. Раньше там висело
+                # «Отчёт пока не создан»: прогон писал только в ленту.
+                try:
+                    _shapka = (f"# {imya} ({_sl})\n\n"
+                               f"**{k.get('дата', '')}** · {_sym} {_tf} · "
+                               f"разворотный {k.get('разворотный')} · "
+                               f"волна {k.get('длина_волны')} баров · "
+                               f"компас {k.get('компас')}\n\n---\n\n")
+                    state["reports"][_sl] = _shapka + (
+                        skazal or "(без текста)")
+                    if state.get("active_agent") == _sl:
+                        update_viewer(state["reports"][_sl])
+                except Exception as _er2:
+                    print(f"[ПРОГОН] отчёт не показался: {_er2}")
+        finally:
+            # LOG_PROGONA_SYROY_V1: возвращаем stdout ПЕРВЫМ делом —
+            # finally срабатывает даже при необработанном исключении,
+            # терминал не должен онеметь навсегда из-за сбоя прогона.
+            sys.stdout = _original_stdout
+            if _log_fayl_progona:
+                try:
+                    _log_fayl_progona.close()
+                except Exception:
+                    pass
+            state["tester_running"] = False
+            state["stop_requested"] = False
+            try:
+                istoriya.postavit(_bylo_moment)
+            except Exception:
+                pass
+
+        # OTCHYOT_PROGONA_V1: закрываем отчёт и говорим, где он лёг.
+        _gde = None
+        if _otchyot is not None:
+            try:
+                _gde = _otchyot.zakryt()
+            except Exception as _e:
+                print(f"[ОТЧЁТ] не закрылся: {_e}")
+        _hvost = ""
+        if _gde:
+            try:
+                _otn = _gde.relative_to(Path(__file__).resolve().parent.parent)
+            except Exception:
+                _otn = _gde
+            _hvost = f" · отчёт: {_otn}"
+            print(f"[ОТЧЁТ] 📄 {_gde}")
+        # ZHURNAL_PROGONA_V1: журнал сделок вместо списка фраз.
+        # Даты берём из «когда_на_рынке» (отчёт кладёт их туда), а
+        # места делим по ДЕЙСТВИЮ: вход, ведение, отказ, молчание.
+        _vhodov = _otkazov = _vedeniy = _molchaniy = 0
+        _stroki_zhurnala = []
+        _gde_kadry = ""
+        try:
+            for _m in (_otchyot.mesta if _otchyot is not None else []):
+                _kogda = str(_m.get("когда_на_рынке")
+                             or _m.get("место_найдено_на") or "?")[:16]
+                _d = str(_m.get("действие") or "").upper()
+                _v = str(_m.get("вердикт") or "").upper()
+                _pochemu = str(_m.get("причина") or "").strip()
+                _kadr = str(_m.get("кадр") or "")
+                if _kadr and not _gde_kadry:
+                    _gde_kadry = "кадры"
+
+                if _d == "ENTER" or _v in ("APPROVED", "ENTER", "OK"):
+                    _vhodov += 1
+                    _c = _m.get("цена_входа")
+                    _s = _m.get("стоп_входа")
+                    _hv = (f" @ {_c}" if _c else "")
+                    _hv += (f", стоп {_s}" if _s else "")
+                    _metka = f"ВОШЁЛ {_hv}".strip()
+                elif _d in ("HOLD", "MOVE_STOP", "ADD", "CLOSE"):
+                    _vedeniy += 1
+                    _metka = {"HOLD": "ДЕРЖУ", "MOVE_STOP": "СТОП ПЕРЕНЁС",
+                              "ADD": "ДОЛИЛ", "CLOSE": "ЗАКРЫЛ"}[_d]
+                elif _d == "WAIT" or _v in ("REJECTED", "WAIT"):
+                    _otkazov += 1
+                    _metka = "ОТКАЗ"
+                else:
+                    _molchaniy += 1
+                    _metka = "ПОДУМАЛ, приказа не было"
+                _stroki_zhurnala.append(
+                    f"  {_kogda:16} {_metka:22} {_pochemu[:58]}")
+        except Exception as _e_it:
+            print(f"[ИТОГ] не собрался ({_e_it})")
+
+        _stroki = [f"✓ прогон окончен · мест {proydeno}{_hvost}", ""]
+        _stroki += _stroki_zhurnala[:40]
+        if len(_stroki_zhurnala) > 40:
+            _stroki.append(f"  … ещё {len(_stroki_zhurnala) - 40} "
+                           f"(все — в отчёте)")
+        _stroki.append("")
+        _stroki.append(f"ВХОДОВ: {_vhodov} · ВЕДЕНИЕ: {_vedeniy} · "
+                       f"ОТКАЗОВ: {_otkazov} · БЕЗ ПРИКАЗА: {_molchaniy}")
+        if _gde_kadry:
+            _stroki.append("Кадры каждого места — в папке отчёта, "
+                           "подпапка «кадры».")
+        if not _vhodov and not _molchaniy:
+            _stroki.append("Входов нет, но все решения отданы рукой — "
+                           "он отказывался сам, причины выше.")
+
+        state["chat_history"].append({
+            "role": "system", "content": "\n".join(_stroki)})
+        update_chat_display()
+        ui.notify(f"✓ прогон окончен · {proydeno} мест", type="positive")
 
     async def market_dispatch():
+        # ODNA_KNOPKA_V1: одна кнопка РЫНОК. В реале — живой Совет,
+        # в тестере — прогон по истории. Старый run_tester_session
+        # оставлен в файле нетронутым: он держится на упразднённой
+        # Искре и не заводится, но выкидывать чужой труд не мне.
         if state.get("mode") == "tester":
-            await run_tester_session()
+            await progon_po_istorii()
         else:
             await run_market()
 
@@ -1713,13 +3371,25 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
 
         # KABINET_VZGLYAD_V1: инструмент и этаж — с полки, не из кода.
         # Одна пара на кадр и на трейдера: смотрят одно и то же.
-        _sym_now, _tf_now = _aktivnyy_rynok()
-        ui.notify(f"👁 смотрим {_sym_now} {_tf_now}", type="info")
+        # UBRAT_CHETVERTOGO_V1: кабинет Совету пару НЕ передаёт.
+        # Каждый берёт свою — инструмент из поста, этаж свой.
+        _sym_now, _tf_now = "", ""
+        ui.notify("📡 Совет: каждый смотрит своё", type="info")
         try:
             loop = asyncio.get_event_loop()
-            _market_future = loop.run_in_executor(
-                None, lambda: council.wake_council(_sym_now, _tf_now,
-                                                   on_event=_on_event))
+            # KABINET_ZNAET_CEH_V1: кабинет открыт по адресу цеха —
+            # значит и Совет собираем по ЭТОМУ цеху, а не по зашитому.
+            # Совет постарше про цех не знает — тогда зовём как раньше.
+            def _zvat_sovet():
+                try:
+                    return council.wake_council(_sym_now, _tf_now,
+                                                on_event=_on_event,
+                                                ceh_id=tseh_id)
+                except TypeError:
+                    return council.wake_council(_sym_now, _tf_now,
+                                                on_event=_on_event)
+
+            _market_future = loop.run_in_executor(None, _zvat_sovet)
             # Дренаж очереди на ГЛАВНОМ потоке, пока wake_council крутится.
             while not _market_future.done():
                 drained_any = False
@@ -1750,7 +3420,61 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         if summary.get("idle"):
             ui.notify("📣 Спуск не нашёл точку — Совет не собирается", type="info")
 
+    def update_sostav():
+        """PROSTO_I_ROVNO_V1: кто на местах и чем работаем — одной строкой.
+
+        Раньше это было видно только по мелькающим уведомлениям, и
+        выходило «говорят одно, написано другое». Теперь висит на месте.
+        """
+        el = sostav_ref.get("element")
+        if el is None:
+            return
+        try:
+            _s, _t = _aktivnyy_rynok()
+            # PODPISI_POD_PUZYRKAMI_V1: по людям, а не общей кашей.
+            # Видно сразу, кто чем занят и у кого своё.
+            from vybor import instrument_dlya as _idl
+            kuski = []
+            for _sl in ("A06", "A07", "A08"):
+                _row = _agent_row(roster, _sl)
+                if not (_row and _row.get("resident")):
+                    continue
+                _imya = _row["resident"].get("имя", _sl)
+                try:
+                    _ins, _otk = _idl(tseh_id, _sl, _s)
+                except Exception:
+                    _ins, _otk = _s, ""
+                _svoy = _otk in ("назначен", "выбрал сам")
+                _cvet = "rgba(0,255,136,0.9)" if _svoy else \
+                        "rgba(255,255,255,0.6)"
+                kuski.append(f'{_imya} — <b style="color:{_cvet}">'
+                             f'{_ins or _s} {_t}</b>')
+            if not kuski:
+                kuski = ['<span style="opacity:.5">за столом никого</span>']
+            _text = "&nbsp;&nbsp;·&nbsp;&nbsp;".join(kuski)
+            if _VAHTA["идёт"]:
+                _text += ('&nbsp;&nbsp;·&nbsp;&nbsp;'
+                          '<span style="color:#00ccff">вахта идёт</span>')
+            el.content = _text
+        except Exception:
+            pass
+
+    # PUZYR_PODSVETKA_V2: кольцо рисуем ПРЯМО В style, с !important.
+    # Классы .active/.done оставляем — они не мешают, но у QBtn свои
+    # стили на border-color/box-shadow, и класс снаружи им проигрывает.
+    # Inline-стиль сильнее — спорить больше не с чем.
+    _PODSVETKA = {
+        "active": ("border-color: rgba(0,204,255,0.75) !important; "
+                   "box-shadow: 0 0 0 2px rgba(0,204,255,0.25) inset, "
+                   "0 0 30px rgba(0,204,255,0.35) !important;"),
+        "done":   ("border-color: rgba(0,255,136,0.75) !important; "
+                   "box-shadow: 0 0 0 2px rgba(0,255,136,0.25) inset, "
+                   "0 0 30px rgba(0,255,136,0.35) !important;"),
+    }
+
     def update_avatar_states():
+        _vidno = []   # PUZYR_NE_OBRYVAETSYA_V3
+        _stil_leg = 0   # PUZYR_STILEM_I_UPDATE_V4
         for aid, el in avatars_ref["elements"].items():
             row = _agent_row(roster, aid)
             base = "avatar vacant" if (row and not row["resident"]) else "avatar"
@@ -1759,32 +3483,183 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 el.classes(add="active")
             if aid in state["reports"]:
                 el.classes(add="done")
+            # PUZYR_NE_OBRYVAETSYA_V3: собираем, что применилось —
+            # печать одной строкой ниже, после обхода всех.
+            _vidno.append(f"{aid}=" + ("active" if aid == state["active_agent"]
+                                       else "done" if aid in state["reports"]
+                                       else "vacant" if "vacant" in base
+                                       else "—"))
 
-    def switch_agent(agent_id: str):
+            # PUZYR_STILEM_I_UPDATE_V4: кольцо — inline-стилем, с
+            # !important. Классов оказалось мало: сервер их менял
+            # (видно строкой выше), а на экране кольцо не переезжало.
+            # Inline сильнее классов и стилей Quasar; плюс явная
+            # команда обновиться — на случай, если автописьмо в
+            # браузер не уходит.
+            try:
+                if not hasattr(el, "_baz_style_puzyrya"):
+                    el._baz_style_puzyrya = "; ".join(
+                        f"{_k}: {_v}" for _k, _v in
+                        getattr(el, "_style", {}).items()) or ""
+                if aid == state["active_agent"]:
+                    _hvost = ("border-color: rgba(0,204,255,0.95) !important; "
+                              "box-shadow: 0 0 0 2px rgba(0,204,255,0.30) inset, "
+                              "0 0 30px rgba(0,204,255,0.45) !important;")
+                elif aid in state["reports"]:
+                    _hvost = ("border-color: rgba(0,255,136,0.95) !important; "
+                              "box-shadow: 0 0 0 2px rgba(0,255,136,0.30) inset, "
+                              "0 0 30px rgba(0,255,136,0.45) !important;")
+                else:
+                    _hvost = ("border-color: rgba(255,255,255,0.14) !important; "
+                              "box-shadow: none !important;")
+                _baz = el._baz_style_puzyrya
+                el.style(replace=(_baz + "; " if _baz else "") + _hvost)
+                el.update()
+                _stil_leg += 1
+            except Exception as _e_st:
+                print(f"[ПУЗЫРЬ] ⚠ стиль {aid} не лёг: {_e_st}")
+
+            # активный важнее «отчёт готов»: смотрим-то мы на него
+            if aid == state["active_agent"]:
+                hvost = _PODSVETKA["active"]
+            elif aid in state["reports"]:
+                hvost = _PODSVETKA["done"]
+            else:
+                hvost = ""
+            try:
+                bazovyy = getattr(el, "_bazovyy_style", "") or ""
+                el.style(replace=bazovyy + hvost)
+            except Exception:
+                pass
+
+        # PUZYR_NE_OBRYVAETSYA_V3: одна строка на клик — видно сразу,
+        # дошла подсветка или нет, и к скольким пузырькам.
+        # PUZYR_PRYAMO_V_BRAUZER_V5: приказываем браузеру напрямую.
+        # Обновление элементов где-то теряется (см. докстроку патча),
+        # а команда из обработчика клика уходит в ТО окно, где кликнули.
+        try:
+            _kuski = []
+            for _aid, _el in avatars_ref["elements"].items():
+                if _aid == state["active_agent"]:
+                    _bc, _bs = ("rgba(0,204,255,0.95)",
+                                "0 0 0 2px rgba(0,204,255,0.30) inset, "
+                                "0 0 30px rgba(0,204,255,0.45)")
+                elif _aid in state["reports"]:
+                    _bc, _bs = ("rgba(0,255,136,0.95)",
+                                "0 0 0 2px rgba(0,255,136,0.30) inset, "
+                                "0 0 30px rgba(0,255,136,0.45)")
+                else:
+                    _bc, _bs = ("rgba(255,255,255,0.14)", "none")
+                # PUZYR_BEZ_GETHTMLELEMENT_V6: getHtmlElement есть
+                # только с NiceGUI 2.9 — на здешней версии команда
+                # падала целиком (ReferenceError в консоли). Берём
+                # самый обычный способ: браузер сам находит пузырьки
+                # по их оформлению, в порядке отрисовки.
+                _kuski.append("['%s','%s']" % (_bc, _bs))
+            if _kuski:
+                _js = ("(()=>{const st=[" + ",".join(_kuski) + "];"
+                       "const els=document.querySelectorAll('.avatar');"
+                       "els.forEach((e,i)=>{if(st[i]){"
+                       "e.style.setProperty('border-color',st[i][0],'important');"
+                       "e.style.setProperty('box-shadow',st[i][1],'important');"
+                       "}});})();")
+                ui.run_javascript(_js)
+                print(f"[ПУЗЫРЬ] команда в браузер: {len(_kuski)} пузырьков")
+        except Exception as _e_js:
+            # фоновый вызов без окна — это нормально, не шумим лишнего
+            print(f"[ПУЗЫРЬ] команда в браузер не ушла: {_e_js}")
+
+        if _vidno:
+            print("[ПУЗЫРЬ] подсветка: " + " ".join(_vidno))
+            print(f"[ПУЗЫРЬ] стиль применён: {_stil_leg} из {len(_vidno)}")
+        else:
+            print("[ПУЗЫРЬ] ⚠ подсветка: пузырьков в avatars_ref НЕТ")
+
+    async def switch_agent(agent_id: str):
         row = _agent_row(roster, agent_id)
         if row and not row["resident"]:
             ui.notify("Вакансия — сюда ещё никого не наняли", type="warning")
         state["active_agent"] = agent_id
-        update_avatar()
-        update_vitals()
-        update_avatar_states()
-        update_stats_panel()
+        # PUZYR_NE_OBRYVAETSYA_V3: раньше эти четыре шли подряд и без
+        # защиты — споткнулся первый, и подсветка (третья в очереди)
+        # не наступала вовсе. Снаружи выглядело как мёртвый пузырёк.
+        # Теперь подсветка первая, и каждый шаг сам за себя.
+        for _imya_shaga, _shag in (("update_avatar_states", update_avatar_states),
+                                   ("update_avatar", update_avatar),
+                                   ("update_vitals", update_vitals),
+                                   ("update_stats_panel", update_stats_panel)):
+            try:
+                _shag()
+            except Exception as _e_shag:
+                print(f"[ПУЗЫРЬ] ⚠ {_imya_shaga} сорвалась: {_e_shag}")
+        # NAZNACHENIYA_PROCH_V1: было уведомление про инструмент —
+        # мелькало и пропадало. Теперь всё в строке состава.
+        try:
+            update_files_display()
+            update_sostav()
+        except Exception:
+            pass
         label = _agent_label(roster, agent_id)
         if agent_id in state["reports"]:
             update_viewer(f"# {label} ({agent_id})\n\n{state['reports'][agent_id]}")
         else:
             update_viewer(f"# {label} ({agent_id})\n\n*Отчёт пока не создан.*")
+        # VZGLYAD_KAZHDOGO_V1: кликнул трейдера — сразу его взгляд.
+        # Кадр рисуется из готовых баров, модель не зовётся: это
+        # по-прежнему бесплатный просмотр для Шефа.
+        try:
+            await pokazat_kadr()
+        except Exception as _e:
+            print(f"[ВЗГЛЯД] кадр не показался: {_e}")
 
     # ── загрузчик (левая колонка) ────────────────────────────
+    def _slot_agenta(agent_id: str) -> str:
+        """Слот, если это торговое место. Морж и прочие — не в счёт."""
+        row = _agent_row(roster, agent_id) or {}
+        slot = row.get("slot") or row.get("old_id") or agent_id
+        return slot if slot in ("A06", "A07", "A08") else ""
+
     def set_active(i):
+        """Клик по полке: чем работает ВЫБРАННЫЙ сейчас трейдер.
+
+        PODPISI_POD_PUZYRKAMI_V1: кликнул человека наверху, кликнул
+        инструмент слева — он взял его. Кто чем занят, тут же написано
+        строкой ниже, по именам. Никого не выбрал — меняем общий.
+        """
         assets = state.get("loaded_assets", [])
-        if 0 <= i < len(assets):
-            state["active_asset"] = i
-            update_files_display()
-            a = assets[i]
-            ui.notify(f"Активен: {a['symbol']} {a['timeframe']}", type="info")
+        if not (0 <= i < len(assets)):
+            return
+        state["active_asset"] = i
+        a = assets[i]
+        slot = _slot_agenta(state.get("active_agent", ""))
+        if slot:
+            try:
+                from vybor import naznachit as _nazn
+                _nazn(tseh_id, slot, a["symbol"])
+                # SVOY_VYBOR_U_KAZHDOGO_V1: запоминаем и ЭТАЖ — тому,
+                # кого Шеф сейчас выбрал, и только ему. Раньше клик
+                # назначал один инструмент, а этаж молча брался «от
+                # комфорта»: выбрать этаж трейдеру было нечем.
+                try:
+                    from vybor import zapisat_etazh as _zap
+                    _zap(tseh_id, slot, a["symbol"], a["timeframe"])
+                except Exception as _e_et:
+                    print(f"[ВЫБОР] этаж не запомнился ({_e_et})")
+                imya = _agent_label(roster, state["active_agent"])
+                ui.notify(f"{imya} → {a['symbol']} {a['timeframe']}",
+                          type="positive")
+                print(f"[РАБОТА] {imya} ({slot}) → {a['symbol']}")
+            except Exception as e:
+                ui.notify(f"⚠ не записалось: {e}", type="negative")
+        else:
+            ui.notify(f"Работаем: {a['symbol']} {a['timeframe']}", type="info")
+        if _VAHTA["идёт"]:
+            _VAHTA.update({"инструмент": a["symbol"],
+                           "этаж": a["timeframe"], "бар": ""})
+        update_files_display()
 
     def update_files_display():
+        update_sostav()          # PROSTO_I_ROVNO_V1: состав всегда свеж
         # ZAGRUZCHIK_PAPKI_TORG_V1: активы сгруппированы в папки по symbol.
         # Внутри папки — список ТФ. Папка с активным ТФ раскрыта сама.
         if not files_ref["element"]:
@@ -1797,6 +3672,14 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 return
 
             active = state.get("active_asset")
+            # POLKA_IZ_TERMINALA_V1: живое и история лежат рядом — пусть
+            # будет видно, что есть что. Спутать их дороже всего.
+            _zhivyh = sum(1 for _a in assets
+                          if _a.get("источник") == "терминал")
+            if _zhivyh:
+                ui.label(f"из терминала: {_zhivyh}").style(
+                    "color:rgba(0,255,136,0.55); font-size:9px; "
+                    "letter-spacing:.08em; padding:0 4px 4px;")
 
             groups = {}
             order = []
@@ -1807,12 +3690,29 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                     order.append(sym)
                 groups[sym].append(i)
 
+            # LENIVAYA_POLKA_V1: инструменты из терминала, у которых
+            # этажи ещё не смотрели, тоже стоят на полке — пустой
+            # папкой. Раскрыл — сходили. Так список виден сразу, а
+            # платим только за открытое.
+            for sym in (state.get("term_spisok") or []):
+                if sym not in groups:
+                    groups[sym] = []
+                    order.append(sym)
+
             for sym in order:
                 idxs = groups[sym]
                 has_active = active in idxs
+                _podpis = (f"{sym}  ·  {len(idxs)} ТФ" if idxs
+                           else f"{sym}  ·  раскрой — посмотрю этажи")
+                # POLKA_POMNIT_V1: раскрытые папки помним. Разведка
+                # этажей перерисовывает полку, и папка закрывалась
+                # ровно тогда, когда в ней появлялось содержимое.
+                _pomnim = state.setdefault("раскрыто", set())
                 with ui.expansion(
-                    f"{sym}  ·  {len(idxs)} ТФ",
-                    value=has_active,
+                    _podpis,
+                    value=(has_active or sym in _pomnim),
+                    on_value_change=lambda e, s=sym: _raskryli_papku(
+                        s, bool(getattr(e, "value", False))),
                 ).classes("w-full").style(
                     "background:rgba(255,255,255,0.02); "
                     "border:1px solid rgba(255,255,255,0.07); "
@@ -1857,17 +3757,401 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
 
     _TEST_DATA_DIR = _HERE / "test_data"
 
+    # SVYAZ_I_PAPKA_V1: память полки живёт в модуле, а не в странице —
+    # переподключился браузер, страница новая, а разобранные файлы те же.
+    global _PASPORTA_KESH
+    try:
+        _PASPORTA_KESH
+    except NameError:
+        _PASPORTA_KESH = {}
+
     def _passport_from_csv(path):
+        # SVYAZ_I_PAPKA_V1: помним разобранные файлы по пути, размеру и
+        # времени правки. Пересборка страницы (а она случается на КАЖДОМ
+        # переподключении браузера) читала весь каталог заново — почти
+        # миллион баров в главном потоке. Сервер молчал, браузер рвал
+        # связь по минуте, страница строилась опять — и так по кругу.
         from williams_core import read_mt5_csv
         p = Path(path)
+        try:
+            st = p.stat()
+            klyuch = (str(p.resolve()), st.st_size, int(st.st_mtime))
+        except Exception:
+            klyuch = None
+        if klyuch is not None and klyuch in _PASPORTA_KESH:
+            return dict(_PASPORTA_KESH[klyuch])
+
+        # POLKA_NE_DUSHIT_SVYAZ_V1: полке нужны ТРИ числа — сколько
+        # баров, первая дата, последняя. Раньше ради них разбирался
+        # ВЕСЬ файл, и на тридцати трёх файлах это было около полутора
+        # миллионов баров в главной нитке. Пока сервер их грыз, он не
+        # отвечал браузеру — тот рвал связь («Connection lost»), после
+        # переподключения страница строилась заново, и всё по кругу.
+        # Отсюда же пустой экран и «пузыри не жмутся»: нажатие до
+        # сервера доходит, а ответить некому.
+        #
+        # Считаем строки кусками, даты берём с двух концов файла.
+        # Ни одно число не разбирается. Не получилось — падаем на
+        # прежний полный разбор, чтобы файл не пропал с полки.
+        _bystro = _bystryy_pasport(p)
+        if _bystro is not None:
+            symbol, tf = _parse_symbol_tf(p.name)
+            _pasport = dict(_bystro)
+            _pasport.update({"name": p.name, "path": str(p),
+                             "symbol": symbol, "timeframe": tf})
+            if klyuch is not None:
+                _PASPORTA_KESH[klyuch] = dict(_pasport)
+            return _pasport
+
         bars = read_mt5_csv(str(p))
         if not bars:
             return None
         symbol, tf = _parse_symbol_tf(p.name)
-        return {
+        _pasport = {
             "name": p.name, "path": str(p), "symbol": symbol, "timeframe": tf,
             "bars": len(bars), "date_from": bars[0].get("date", "?"), "date_to": bars[-1].get("date", "?"),
         }
+        if klyuch is not None:      # SVYAZ_I_PAPKA_V1
+            _PASPORTA_KESH[klyuch] = dict(_pasport)
+        return _pasport
+
+    # POLKA_IZ_TERMINALA_V1 — какие этажи спрашиваем у терминала.
+    # Не все подряд: минутка и двухчасовка редко нужны, а опрос платный
+    # временем. Пустые этажи на полку не кладём.
+    # OKNO_MOGLO_UYTI_V1: было девять этажей — на большом обзоре рынка это
+    # сотни походов в терминал, опрос тянулся минутами, и страница успевала
+    # уйти из-под него. Шесть рабочих этажей и потолок по инструментам:
+    # быстро, и хватает на всё, чем торгуют.
+    _TERM_ETAZHI = ("M15", "M30", "H1", "H4", "D1", "W1")
+    _TERM_POTOLOK = 25      # инструментов за раз; обзор рынка длиннее — режем
+
+    # ── LENIVAYA_POLKA_V1 ──────────────────────────────────────
+    # Список — сразу и целиком. Этажи — только у того инструмента,
+    # который открыли. Раньше платили за всё сразу, оттого и висело.
+
+    def _vse_etazhi_nasosa() -> tuple:
+        """Все этажи, какие знает насос, от старших к младшим."""
+        try:
+            import sys as _s
+            _b = str(_HERE)
+            if _b not in _s.path:
+                _s.path.insert(0, _b)
+            import mt5_feed as _mf
+            karta = dict(getattr(_mf, "_TF_MAP", {}) or {})
+        except Exception:
+            karta = {}
+        if not karta:
+            return _TERM_ETAZHI
+        poryadok = ["MN1", "W1", "D1", "H12", "H8", "H4", "H2", "H1",
+                    "M30", "M20", "M15", "M12", "M10", "M6", "M5",
+                    "M4", "M3", "M2", "M1"]
+        est = [tf for tf in poryadok if tf in karta]
+        # то, чего нет в нашем порядке, но есть у насоса — в хвост
+        est += [tf for tf in karta if tf not in est]
+        return tuple(est)
+
+    def _otkryt_terminal():
+        """(mt5, беда). Связь открыта — закрывать зовущему."""
+        try:
+            import sys as _s
+            _b = str(_HERE)
+            if _b not in _s.path:
+                _s.path.insert(0, _b)
+            import mt5_feed as _mf
+        except Exception as e:
+            return None, None, f"насос не поднялся: {e}"
+        mt5 = _mf._terminal()
+        if mt5 is None:
+            return None, None, ("MetaTrader5 для питона не установлен — "
+                                "поставь его и перезапусти город")
+        try:
+            if not mt5.initialize():
+                oshibka = ""
+                try:
+                    oshibka = f" ({mt5.last_error()})"
+                except Exception:
+                    pass
+                return None, None, ("терминал не отвечает" + oshibka +
+                                    ". Запусти MetaTrader и войди в счёт")
+        except Exception as e:
+            return None, None, f"связь с терминалом не открылась: {e}"
+        return mt5, _mf, ""
+
+    def _spisok_iz_terminala() -> tuple:
+        """Только ИМЕНА инструментов. Один поход, без баров."""
+        mt5, _mf, beda = _otkryt_terminal()
+        if beda:
+            return [], beda
+        try:
+            vse = mt5.symbols_get() or []
+        except Exception as e:
+            return [], f"терминал не отдал список: {e}"
+        finally:
+            try:
+                mt5.shutdown()
+            except Exception:
+                pass
+        if not vse:
+            return [], ("терминал на связи, но инструментов не отдал — "
+                        "проверь, что счёт залогинен")
+        vidnye = [getattr(s, "name", "") for s in vse
+                  if getattr(s, "visible", False)]
+        vidnye = [n for n in vidnye if n]
+        if not vidnye:
+            vidnye = [getattr(s, "name", "") for s in list(vse)[:10]]
+            vidnye = [n for n in vidnye if n]
+        return vidnye, ""
+
+    def _etazhi_instrumenta(imya: str) -> tuple:
+        """Все живые этажи ОДНОГО инструмента. Платим только за него."""
+        mt5, _mf, beda = _otkryt_terminal()
+        if beda:
+            return [], beda
+        aktivy = []
+        try:
+            try:
+                info = mt5.symbol_info(imya)
+                if info is not None and not getattr(info, "visible", True):
+                    mt5.symbol_select(imya, True)
+            except Exception:
+                pass
+            for tf in _vse_etazhi_nasosa():
+                kod = (getattr(_mf, "_TF_MAP", {}) or {}).get(tf)
+                if kod is None:
+                    continue
+                try:
+                    bary = mt5.copy_rates_from_pos(imya, kod, 0, 2)
+                except Exception:
+                    bary = None
+                if bary is None or len(bary) == 0:
+                    continue          # этаж молчит — на полку не кладём
+                try:
+                    from datetime import datetime as _dt
+                    posledniy = _dt.fromtimestamp(
+                        int(bary[-1]["time"])).strftime("%Y.%m.%d %H:%M")
+                except Exception:
+                    posledniy = "?"
+                aktivy.append({
+                    "name": f"{imya} {tf}", "path": "", "symbol": imya,
+                    "timeframe": tf, "bars": 0,
+                    "date_from": "терминал", "date_to": posledniy,
+                    "источник": "терминал",
+                })
+        finally:
+            try:
+                mt5.shutdown()
+            except Exception:
+                pass
+        if not aktivy:
+            return [], f"{imya}: терминал не отдал ни одного этажа"
+        return aktivy, ""
+
+    async def _razvedat_instrument(imya: str):
+        """Раскрыли папку — сходить за этажами именно этого."""
+        razvedano = state.setdefault("разведано", set())
+        if imya in razvedano or state.get("развед_идёт") == imya:
+            return
+        state["развед_идёт"] = imya
+        try:
+            ui.notify(f"📡 {imya}: смотрю этажи…", type="info")
+        except Exception:
+            pass
+        import asyncio as _a
+        try:
+            aktivy, beda = await _a.get_event_loop().run_in_executor(
+                None, _etazhi_instrumenta, imya)
+        finally:
+            state["развед_идёт"] = ""
+        if beda:
+            print(f"[ПОЛКА] ⚠️  {beda}")
+            try:
+                ui.notify(f"⚠ {beda}", type="warning")
+            except Exception:
+                pass
+            return
+        est = state.get("loaded_assets") or []
+        byli = {(a.get("symbol"), a.get("timeframe")) for a in est}
+        novye = [a for a in aktivy
+                 if (a["symbol"], a["timeframe"]) not in byli]
+        state["loaded_assets"] = est + novye
+        razvedano.add(imya)
+        print(f"[ПОЛКА] 📂 {imya}: этажей {len(aktivy)}")
+        try:
+            update_files_display()
+        except Exception as e:
+            print(f"[ПОЛКА] полка не перерисовалась: {e}")
+
+    def _raskryli_papku(imya: str, otkryta: bool):
+        """Обработчик раскрытия. Задачей — рисовать нельзя блокируя."""
+        # POLKA_POMNIT_V1: запоминаем ДО всего остального — иначе
+        # перерисовка после разведки закроет то, что Шеф открыл.
+        _pomnim = state.setdefault("раскрыто", set())
+        if otkryta:
+            _pomnim.add(imya)
+        else:
+            _pomnim.discard(imya)
+        if not otkryta:
+            return
+        if imya in (state.get("разведано") or set()):
+            return
+        try:
+            import asyncio as _a
+            _a.get_event_loop().create_task(_razvedat_instrument(imya))
+        except Exception as e:
+            print(f"[ПОЛКА] разведка не пошла: {e}")
+
+    def _sobrat_iz_terminala() -> tuple:
+        """Спросить сам терминал: что открыто в обзоре рынка и что живо.
+
+        Возвращает (активы, беда). Беда — текстом, чтобы кабинет мог
+        сказать её вслух, а не молчать.
+        """
+        try:
+            import sys as _s
+            _b = str(_HERE)
+            if _b not in _s.path:
+                _s.path.insert(0, _b)
+            import mt5_feed as _mf
+        except Exception as e:
+            return [], f"насос не поднялся: {e}"
+
+        mt5 = _mf._terminal()
+        if mt5 is None:
+            return [], ("MetaTrader5 для питона не установлен — "
+                        "поставь его и перезапусти город")
+
+        # SVYAZ_S_TERMINALOM_V1: _terminal() только ИМПОРТИРУЕТ библиотеку,
+        # связь он не открывает — имя обмануло. Без initialize() терминал
+        # молчит на всё: список инструментов пуст, баров нет, а выглядит
+        # это как «на связи, но котировок не даёт».
+        try:
+            if not mt5.initialize():
+                oshibka = ""
+                try:
+                    oshibka = f" ({mt5.last_error()})"
+                except Exception:
+                    pass
+                return [], ("терминал не отвечает" + oshibka +
+                            ". Запусти MetaTrader и войди в счёт — "
+                            "питон говорит с УЖЕ ОТКРЫТЫМ терминалом")
+        except Exception as e:
+            return [], f"связь с терминалом не открылась: {e}"
+
+        try:
+            vse = mt5.symbols_get() or []
+        except Exception as e:
+            try:
+                mt5.shutdown()
+            except Exception:
+                pass
+            return [], f"терминал не отдал список инструментов: {e}"
+
+        if not vse:
+            try:
+                mt5.shutdown()
+            except Exception:
+                pass
+            return [], ("терминал на связи, но инструментов не отдал — "
+                        "проверь, что счёт залогинен")
+
+        vidnye = [s for s in vse if getattr(s, "visible", False)]
+        if not vidnye:
+            vidnye = list(vse)[:10]      # обзор пуст — берём хоть что-то
+        vidnye = vidnye[:_TERM_POTOLOK]
+
+        aktivy = []
+        for s in vidnye:
+            imya = getattr(s, "name", "")
+            if not imya:
+                continue
+            # SVYAZ_S_TERMINALOM_V1: инструмент, не отмеченный в обзоре
+            # рынка, баров не отдаёт — сперва берём его в обзор.
+            try:
+                info = mt5.symbol_info(imya)
+                if info is not None and not getattr(info, "visible", True):
+                    mt5.symbol_select(imya, True)
+            except Exception:
+                pass
+            for tf in _TERM_ETAZHI:
+                kod = _mf._TF_MAP.get(tf)
+                if kod is None:
+                    continue
+                try:
+                    bary = mt5.copy_rates_from_pos(imya, kod, 0, 2)
+                except Exception:
+                    bary = None
+                if bary is None or len(bary) == 0:
+                    continue          # этаж молчит — на полку не кладём
+                try:
+                    from datetime import datetime as _dt
+                    posledniy = _dt.fromtimestamp(
+                        int(bary[-1]["time"])).strftime("%Y.%m.%d %H:%M")
+                except Exception:
+                    posledniy = "?"
+                aktivy.append({
+                    "name": f"{imya} {tf}", "path": "", "symbol": imya,
+                    "timeframe": tf, "bars": 0,
+                    "date_from": "терминал", "date_to": posledniy,
+                    "источник": "терминал",
+                })
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        if not aktivy:
+            return [], (f"терминал на связи, инструментов видит "
+                        f"{len(vidnye)}, но баров не отдал ни по одному — "
+                        f"похоже, счёт не залогинен или брокер не даёт "
+                        f"историю")
+        return aktivy, ""
+
+    async def sobrat_terminal():
+        """Кнопка ТЕРМИНАЛ: сходить и разложить котировки по полке.
+
+        OKNO_MOGLO_UYTI_V1: опрос долгий, а страница за это время могла
+        перезагрузиться. Тогда окно, в которое мы собрались рисовать,
+        уже мертво — NiceGUI роняет KeyError изнутри. Поэтому всё, что
+        трогает экран ПОСЛЕ похода, обёрнуто: данные ложатся в state
+        всегда, а рисуем — если есть куда.
+        """
+        def _tiho(chto, *a, **kw):
+            try:
+                chto(*a, **kw)
+            except Exception:
+                pass       # окна нет — не беда, данные уже сохранены
+
+        # LENIVAYA_POLKA_V1: спрашиваем ТОЛЬКО СПИСОК — один поход.
+        # Этажи подтянутся при раскрытии папки, каждый за себя.
+        _tiho(ui.notify, "📡 спрашиваю терминал…", type="info")
+        import asyncio as _a
+        imena, beda = await _a.get_event_loop().run_in_executor(
+            None, _spisok_iz_terminala)
+        if not beda:
+            state["term_spisok"] = imena
+            state.setdefault("разведано", set())
+            print(f"[ТЕРМИНАЛ] 📋 инструментов {len(imena)} — "
+                  f"этажи по клику")
+        aktivy = []
+        if beda:
+            _tiho(ui.notify, f"⚠ {beda}", type="warning")
+            print(f"[ТЕРМИНАЛ] ⚠️  {beda}")
+            return
+        # файлы не выкидываем: живое и история лежат рядом, но помечены
+        bylo = [x for x in state.get("loaded_assets", [])
+                if x.get("источник") != "терминал"]
+        # VZGLYAD_KAZHDOGO_V1: запомнили выбор ИМЕНЕМ до перестройки.
+        # Свежее ложится в начало, всё съезжает вниз — и прежний
+        # номер строки начинает показывать на чужой актив. Первым в
+        # опросе этажей идёт M15, поэтому сброс всегда выглядел как
+        # «скинуло на M15».
+        _bylo_vybrano = _zapomnit_vybor()
+        state["loaded_assets"] = aktivy + bylo
+        _vernut_vybor(_bylo_vybrano)
+        simvolov = len({x["symbol"] for x in aktivy})
+        print(f"[ТЕРМИНАЛ] 📡 инструментов {simvolov}, этажей {len(aktivy)}")
+        _tiho(update_files_display)
+        _tiho(ui.notify, f"📡 с терминала: инструментов {simvolov}, "
+                         f"этажей {len(aktivy)}", type="positive")
 
     def _scan_test_data():
         assets = []
@@ -1882,8 +4166,11 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                         print(f"[TORG·SCAN] {f.name}: {_e}")
         except Exception as _e:
             print(f"[TORG·SCAN] папка: {_e}")
+        # VZGLYAD_KAZHDOGO_V1: пересканирование папки роняло выбор
+        # так же молча, как ТЕРМИНАЛ.
+        _bylo_vybrano = _zapomnit_vybor()
         state["loaded_assets"] = assets
-        state["active_asset"] = 0 if assets else None
+        _vernut_vybor(_bylo_vybrano, tiho=True)
 
     async def handle_upload(e):
         name = e.name
@@ -1892,8 +4179,37 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         except Exception as _ce:
             ui.notify(f"Не прочитать файл: {_ce}", type="negative")
             return
+        # KARTINKA_SHEFA_V1: картинку Шеф показывает жителю, а не
+        # заряжает как котировки. Уходит тем же путём, что «Взгляд».
+        if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            try:
+                from pathlib import Path as _Pk
+                from datetime import datetime as _dtk
+                _pap = _Pk(__file__).resolve().parent / "показанное"
+                _pap.mkdir(parents=True, exist_ok=True)
+                _dest = _pap / name
+                _dest.write_bytes(content)
+                from hooks import load_trading_state, save_trading_state
+                _tk = load_trading_state()
+                _tk["vzglyad_shefa"] = {
+                    "путь": str(_dest),
+                    "подпись": _Pk(name).stem,
+                    "когда": _dtk.now().isoformat(timespec="seconds"),
+                }
+                save_trading_state(_tk)
+                ui.notify(f"\U0001f5bc Показываю жителю: {_Pk(name).stem}",
+                          type="positive")
+            except Exception as _ke:
+                ui.notify(f"Картинка не дошла: {_ke}", type="negative")
+            _up = files_ref.get("uploader")
+            if _up:
+                try:
+                    _up.reset()
+                except Exception:
+                    pass
+            return
         if not name.lower().endswith(".csv"):
-            ui.notify("Нужен CSV экспорта MT5", type="warning")
+            ui.notify("Нужен CSV экспорта MT5 или картинка", type="warning")
             return
         dest_dir = _TEST_DATA_DIR
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1942,6 +4258,167 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
         ui.notify("Очищено", type="info")
 
     # ── чат с активным агентом ───────────────────────────────
+    # ═══ CHAT_KNOPKI_I_OSMYSLIT_V1 ═══
+    # Сохранить / достать — тем же способом и с тем же именем файла,
+    # что в кабинете Брата: один город, одна привычка.
+    _CHATY_DIR = Path(__file__).resolve().parent / "чаты"
+
+    def _sohranit_chat():
+        if not state.get("chat_history"):
+            ui.notify("Разговор пустой — нечего сохранять", type="warning")
+            return
+        try:
+            import json
+            from datetime import datetime as _dt
+            _CHATY_DIR.mkdir(parents=True, exist_ok=True)
+            ts = _dt.now().strftime("%Y-%m-%d_%H-%M-%S")
+            fp = _CHATY_DIR / f"чат_{ts}.json"
+            fp.write_text(json.dumps(state["chat_history"],
+                                     ensure_ascii=False, indent=2),
+                          encoding="utf-8")
+            ui.notify(f"💾 сохранено: {fp.name}", type="positive")
+        except Exception as e:
+            ui.notify(f"не сохранилось: {e}", type="negative")
+
+    def _dostat_chat():
+        try:
+            files = sorted(_CHATY_DIR.glob("чат_*.json"), reverse=True) \
+                if _CHATY_DIR.exists() else []
+        except Exception:
+            files = []
+        if not files:
+            ui.notify("Сохранённых разговоров нет", type="warning")
+            return
+        with ui.dialog() as _dlg, ui.card().style(
+                "background:#0d1117;border:1px solid rgba(255,255,255,0.12);"
+                "border-radius:16px;min-width:340px;padding:20px;"):
+            ui.html('<div style="color:rgba(255,255,255,0.9);font-weight:700;'
+                    'font-size:0.9rem;margin-bottom:14px;letter-spacing:0.08em;">'
+                    '📂 ВЫБЕРИ РАЗГОВОР</div>')
+            for fp in files[:20]:
+                def _zagruzit(f=fp):
+                    try:
+                        import json
+                        state["chat_history"] = json.loads(
+                            f.read_text(encoding="utf-8"))
+                        update_chat_display()
+                        _dlg.close()
+                        ui.notify(f"📂 загружен: {f.name}", type="positive")
+                    except Exception as e:
+                        ui.notify(f"не загрузилось: {e}", type="negative")
+                ui.button(fp.stem.replace("чат_", ""),
+                          on_click=_zagruzit).props("flat no-caps").style(
+                    "width:100%;text-align:left;font-family:monospace;"
+                    "font-size:0.78rem;color:rgba(255,255,255,0.75);"
+                    "padding:8px 12px;border-radius:8px;"
+                    "background:rgba(255,255,255,0.04);margin-bottom:4px;")
+            ui.button("отмена", on_click=_dlg.close).props("flat").style(
+                "margin-top:10px;color:rgba(255,255,255,0.4);font-size:0.75rem;")
+        _dlg.open()
+
+    def _ochistit_razgovor():
+        """Чистит ТОЛЬКО ленту разговора. История сделок — своя кнопка
+        наверху, её этот веник не трогает. Нужно при смене модели:
+        новая не должна получать разговор, который вела предыдущая,
+        иначе подхватит чужой голос и чужие выводы."""
+        n = len(state.get("chat_history") or [])
+        if not n:
+            ui.notify("Разговор и так пуст", type="info")
+            return
+        with ui.dialog() as _dlg, ui.card().style(
+                "background:#1a1f2e;border:1px solid rgba(255,255,255,0.1);"):
+            ui.label(f"Очистить разговор? ({n} сообщений)").style(
+                "font-weight:700;color:rgba(255,255,255,0.9);font-size:14px;")
+            ui.label("История сделок не пострадает — у неё своя кнопка "
+                     "наверху. Сохранённые разговоры тоже останутся.").style(
+                "color:rgba(255,255,255,0.55);font-size:12px;max-width:340px;")
+            with ui.row():
+                ui.button("отмена", on_click=_dlg.close).props("flat")
+
+                def _da():
+                    state["chat_history"] = []
+                    update_chat_display()
+                    _dlg.close()
+                    ui.notify("🧹 разговор очищен", type="positive")
+                ui.button("Очистить", on_click=_da).props("color=negative")
+        _dlg.open()
+
+    async def _osmyslit():
+        """Житель сам пишет вывод по последним своим словам — и вывод
+        ложится ему В ПАМЯТЬ КАК РАБОЧИЙ.
+
+        Почему рабочий, а не «общение». Память жителя раскладывается по
+        КОНТЕКСТУ входа, и мост с Биржи спрашивает только рабочее. Если
+        записать разговор как общение — за столом он не всплывёт
+        никогда, и выученное у Шефа пропадёт даром. Слово Шефа: «на
+        работе же разговор».
+
+        Вывод пишет ОН, а не мы: своими словами, по своим последним
+        сообщениям. Мы только просим и кладём.
+        """
+        aid = state.get("active_agent")
+        _karta = {"A02": ("торговый_хаос", "A02", "chat_with_morj"),
+                  "A03": ("торговый_хаос", "A03", "chat_with_panikyor"),
+                  "A04": ("торговый_хаос", "A04", "chat_with_hans"),
+                  "A05": ("контора", "архивариус", "chat_with_arkhiv"),
+                  "A06": ("торговый_хаос", "A06", "chat_with_brut"),
+                  "A07": ("торговый_хаос", "A07", "chat_with_avan"),
+                  "A08": ("торговый_хаос", "A08", "chat_with_cons"),
+                  "A09": ("контора", "исполнитель", "chat_with_executor")}
+        if aid not in _karta:
+            ui.notify("Осмыслить может только живой собеседник", type="warning")
+            return
+        _ceh_id, _slot, _fn_name = _karta[aid]
+        svoi = [m for m in (state.get("chat_history") or [])
+                if m.get("role") == "assistant" and m.get("agent") == aid
+                and m.get("content")]
+        if not svoi:
+            ui.notify("Он ещё ничего не сказал — осмыслять нечего",
+                      type="warning")
+            return
+        label = _agent_label(roster, aid)
+        ui.notify(f"🧠 {label} осмысляет...", type="info")
+        prosba = (
+            "Остановись и посмотри на свои последние слова в этом "
+            "разговоре. Что ты из него забрал ДЛЯ РАБОТЫ? Напиши ОДИН "
+            "короткий вывод своими словами — одно-два предложения, без "
+            "пересказа разговора и без JSON. Не «мы обсудили то-то», а "
+            "то, что ты теперь понимаешь и будешь делать иначе. Если "
+            "забрать нечего — так и скажи одной строкой.")
+        try:
+            _brain = _slot_brain(_ceh_id, _slot)
+            if _brain is None:
+                raise RuntimeError(f"мозг {_slot} ещё не в слоте")
+            _chat = getattr(_brain, _fn_name)
+            dialog = [m for m in state["chat_history"]
+                      if m.get("role") in ("user", "assistant")
+                      and m.get("content")][-10:]
+            vyvod = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _chat(prosba, None, dialog))
+        except Exception as e:
+            ui.notify(f"не осмыслилось: {e}", type="negative")
+            return
+        vyvod = (str(vyvod or "")).strip()
+        if not vyvod:
+            ui.notify("Он промолчал — ничего не записано", type="warning")
+            return
+        try:
+            from nositel import otmetit_yarkim_slotom
+            res = otmetit_yarkim_slotom(_ceh_id, _slot, vyvod[:600],
+                                        otkuda="работа")
+        except Exception as e:
+            ui.notify(f"в память не легло: {e}", type="negative")
+            return
+        state["chat_history"].append({
+            "role": "assistant", "agent": aid,
+            "content": f"🧠 осмыслил: {vyvod}"})
+        update_chat_display()
+        if res.get("дописано"):
+            ui.notify("🧠 легло в память как рабочее", type="positive")
+        else:
+            ui.notify(f"🧠 не записалось: {res.get('причина','—')}",
+                      type="warning")
+
     async def send_message():
         if not input_ref["element"]:
             return
@@ -1988,7 +4465,20 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 # на то же, что и Шеф. Кто ещё не умеет принимать
                 # рынок (морж, паникёр, ганс, архивариус, исполнитель)
                 # — спрашиваем по-старому.
-                _rynok_seychas = _aktivnyy_rynok()
+                # RAZGOVOR_PRO_SVOY_INSTRUMENT_V1: берём ту же пару,
+                # что и кадр справа — у трейдера СВОЙ инструмент и
+                # свой этаж. Раньше здесь была полка загрузчика, и
+                # Илья на GBPUSD отвечал про EURUSD, потому что евро
+                # было выбрано слева. Для не-трейдеров
+                # _para_aktivnogo сама вернёт полку — им как было.
+                try:
+                    _s_sv, _t_sv, _chey_sv, _net_sv = _para_aktivnogo()
+                    _rynok_seychas = ((_s_sv, _t_sv) if (_s_sv and _t_sv)
+                                      else _aktivnyy_rynok())
+                except Exception as _e_sv:
+                    print(f"[РЫНОК] пара трейдера не прочиталась "
+                          f"({_e_sv}) — беру полку")
+                    _rynok_seychas = _aktivnyy_rynok()
                 try:
                     reply = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: _chat(msg, state.get(_last_key), dialog,
@@ -2045,22 +4535,65 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 with ui.element("div").style(
                     "display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:center; flex:1;"
                 ):
+                    # PUZYRI_V1: были голые div — клик держался на
+                    # всплытии и терялся, как у тумблера. И подсветка
+                    # «кто выбран» была прибита к A01, то есть к Искре,
+                    # упразднённой 06.08: кабинет открывался на агенте,
+                    # которого нет, оттого ни кадра, ни отчёта, ни чата.
                     for r in roster:
                         old_id = r["old_id"]
                         occupied = bool(r["resident"])
-                        cls = f'avatar {"active" if old_id == "A01" else ""} {"" if occupied else "vacant"}'
-                        avatar = ui.element("div").classes(cls)
+                        aktiven = (old_id == state.get("active_agent"))
+                        cls = (f'avatar {"active" if aktiven else ""} '
+                               f'{"" if occupied else "vacant"}')
                         style = ""
                         if occupied:
                             av = _avatar_url_for(r["resident"]["папка"], static_prefix)
                             if av:
                                 style = f"background-image:url('{av}');"
-                        avatar.style(style)
-                        avatar.on("click", lambda e, w=old_id: switch_agent(w))
+
+                        async def _nazhali(w=old_id):
+                            print(f"[ПУЗЫРЬ] нажали: {w}")
+                            await switch_agent(w)
+
+                        avatar = ui.button(on_click=_nazhali).classes(cls)
+                        avatar.props("flat dense no-caps").style(style)
+                        # PUZYR_PODSVETKA_V2: базовый style (аватарка
+                        # фоном) запоминаем — подсветка будет дописываться
+                        # к нему, а не затирать его.
+                        avatar._bazovyy_style = style
                         with avatar:
                             if not occupied:
                                 ui.label(old_id).style("font-size: 9px")
                         avatars_ref["elements"][old_id] = avatar
+                # PROSTO_I_ROVNO_V1: строка состава. Всегда на виду, кто
+                # на местах и чем работаем — чтобы не гадать по кликам и
+                # не ловить пропадающие уведомления.
+                sostav_ref["element"] = ui.html("").style(
+                    "color:rgba(255,255,255,0.55); font-size:11px; "
+                    "letter-spacing:0.04em; margin-right:14px; "
+                    "white-space:nowrap; overflow:hidden; "
+                    "text-overflow:ellipsis; max-width:46vw;")
+                # VREMYA_GORODA_V1: часы и сессия — текстом, всегда на
+                # виду. Пояс сервера город узнаёт сам у терминала, руками
+                # ничего не вбивается. Сессии берутся из kalibrovka —
+                # второй правды о рынке не заводим.
+                vremya_ref["element"] = ui.label("").style(
+                    "color:rgba(139,233,253,0.75); font-size:11px; "
+                    "letter-spacing:0.05em; margin-right:14px; "
+                    "white-space:nowrap;")
+
+                def _vremya_obnovit():
+                    try:
+                        import vremya
+                        if vremya_ref["element"]:
+                            vremya_ref["element"].text = vremya.stroka()
+                    except Exception:
+                        pass
+
+                _vremya_obnovit()
+                ui.timer(30.0, _vremya_obnovit)
+
                 with ui.element("div").style(
                     "margin-right:10px; background:rgba(255,255,255,0.06); "
                     "border:1px solid rgba(255,255,255,0.12); border-radius:10px;"
@@ -2068,7 +4601,28 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                     _opts = {m["id"]: f'{m["name"]} ({m["price"]})' for m in MODELS_CATALOG}
                     ui.select(_opts, value=state["model"], on_change=on_model_change) \
                         .props('dense borderless dark options-dense').style("min-width:190px;")
-                ui.button("← Город", on_click=lambda: ui.navigate.to("/grondheim")).props("flat").style(
+                svoya_model_ref: dict[str, Any] = {"element": None}
+
+                def _svoya_model(_e=None):
+                    val = (svoya_model_ref["element"].value or "").strip()
+                    if not val:
+                        return
+                    state["model"] = val
+                    llm.set_model(val)
+                    ui.notify(f"модель: {val}", type="info")
+
+                with ui.row().style("gap:2px; align-items:center; margin-right:10px;"):
+                    svoya_model_ref["element"] = ui.input(
+                        placeholder="своя модель с OpenRouter…").props(
+                        'dense borderless dark').style(
+                        "min-width:170px; color:rgba(255,255,255,0.85); "
+                        "font-size:11px; background:rgba(255,255,255,0.06); "
+                        "border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:2px 8px;")
+                    svoya_model_ref["element"].on("keydown.enter", _svoya_model)
+                    ui.button("➜", on_click=_svoya_model).props("flat dense size=sm").style(
+                        "color:rgba(0,255,136,0.75);")
+
+                ui.button("← Город", on_click=lambda: ui.navigate.to("/grondheim", new_tab=True)).props("flat").style(
                     "color:rgba(255,255,255,0.5);")
 
         with ui.element("div").classes("area-left"):
@@ -2081,6 +4635,10 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                         ui.label("ЗАГРУЗЧИК").style(
                             "color:rgba(255,255,255,0.92); font-weight:900; letter-spacing:.12em; "
                             "text-transform:uppercase; font-size:11px;")
+                        # POLKA_IZ_TERMINALA_V1: живые котировки на полку
+                        ui.button("ТЕРМИНАЛ", on_click=sobrat_terminal).props(
+                            "flat dense size=xs").style(
+                            "color:rgba(0,255,136,0.75); font-size:9px;")
                         ui.button("CLEAR", on_click=clear_files).props("flat dense size=xs").style(
                             "color:rgba(255,80,80,0.5); font-size:9px;")
                     files_ref["uploader"] = ui.upload(
@@ -2106,9 +4664,13 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
 
                         # VAHTA_NOVAYA_SVECHA_V1 — стоять на вахте и
                         # смотреть каждую новую свечу рабочего этажа.
+                        # PROSTO_I_ROVNO_V1: кнопка сворачивалась в две
+                        # строки и поднимала соседей — ряд разъезжался.
+                        # Теперь одна строка и та же высота, что у прочих.
                         toolbar_refs["vahta_btn"] = ui.element("div").style(
-                            "padding:6px 14px;border-radius:7px;font-size:12px;"
-                            "font-weight:700;cursor:pointer;"
+                            "padding:8px 16px;border-radius:8px;font-size:12px;"
+                            "font-weight:700;cursor:pointer;white-space:nowrap;"
+                            "display:flex;align-items:center;flex-shrink:0;"
                             "background:rgba(255,255,255,0.03);"
                             "color:rgba(255,255,255,0.45);"
                             "border:1px solid rgba(255,255,255,0.08);")
@@ -2116,21 +4678,76 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                             toolbar_refs["vahta_html"] = ui.html("⏱ ВАХТА")
                         toolbar_refs["vahta_btn"].on(
                             "click", lambda: _vahta_pereklyuchit())
-                        ui.timer(20.0, _vahta_tik)   # async-колбэк NiceGUI ждёт сам
-                        toolbar_refs["mode_real"] = ui.element("div").style(
+                        # VAHTA_GORODSKAYA_V1: таймер вахты живёт при
+                        # городе. Здесь только подтягиваем вид кнопки —
+                        # чтобы, зайдя из другого окна, видеть правду.
+                        ui.timer(3.0, _vahta_vid)
+                        # TUMBLER_V1: были голые div — клик держался на
+                        # всплытии события и терялся, если сверху лёг любой
+                        # слой. Выглядело как «кнопка не кликается»,
+                        # хотя обработчик был цел. Теперь настоящие кнопки:
+                        # клик обрабатывает сама кнопка.
+                        toolbar_refs["mode_real"] = ui.button(
+                            "РЕАЛ", on_click=lambda: set_mode("real")
+                        ).props("flat no-caps dense").style(
                             "padding:6px 14px;border-radius:7px;font-size:12px;font-weight:700;"
                             "cursor:pointer;background:rgba(0,255,136,0.15);color:#00ff88;"
                             "border:1px solid rgba(0,255,136,0.4);")
-                        toolbar_refs["mode_real"].on("click", lambda: set_mode("real"))
-                        with toolbar_refs["mode_real"]:
-                            ui.html("РЕАЛ")
-                        toolbar_refs["mode_tester"] = ui.element("div").style(
+                        toolbar_refs["mode_tester"] = ui.button(
+                            "ТЕСТЕР", on_click=lambda: set_mode("tester")
+                        ).props("flat no-caps dense").style(
                             "padding:6px 14px;border-radius:7px;font-size:12px;font-weight:700;"
                             "cursor:pointer;background:rgba(255,255,255,0.03);"
                             "color:rgba(255,255,255,0.45);border:1px solid rgba(255,255,255,0.08);")
-                        toolbar_refs["mode_tester"].on("click", lambda: set_mode("tester"))
-                        with toolbar_refs["mode_tester"]:
-                            ui.html("ТЕСТЕР")
+                        # PARA_PO_POSTU_V1: «ловить» переехало ВНИЗ, к
+                        # своему полю. Раньше подпись стояла здесь, а
+                        # число — после дат, и на панели читалось
+                        # «ловить: отрезок: 01.02 10.03 15»: подпись от
+                        # одного поля, значение от другого.
+                        # PROGON_S_DATY_V1: поле «с даты». Пусто — ищем
+                        # от сегодня, как было. Заполнено — искатель
+                        # встаёт в этот момент истории и ищет назад.
+                        toolbar_refs["ot_daty_label"] = ui.element("div").style("display:none;align-items:center;gap:5px;")
+                        with toolbar_refs["ot_daty_label"]:
+                            # TESTER_PULT_V2: одна подпись на обе даты
+                            ui.label("отрезок:").style("color:rgba(255,255,255,0.45);font-size:11px;")
+                        toolbar_refs["ot_daty_input"] = ui.element("div").style("display:none;align-items:center;")
+                        with toolbar_refs["ot_daty_input"]:
+                            def _on_daty_change(e):   # PROGON_S_DATY_V1
+                                state["progon_ot_daty"] = (e.value or "").strip()
+                            ui.input(
+                                value="", placeholder="с 28.04.2026",   # DATY_PO_CHELOVECHESKI_V1
+                                on_change=_on_daty_change,
+                            ).props(
+                                'dense outlined '
+                                'input-style="color:rgba(0,204,255,0.95);'
+                                'font-family:JetBrains Mono;font-size:11px;'
+                                'text-align:center;padding:0 2px;"'
+                            ).style("width:112px;")
+
+                        # TESTER_PULT_V1: верхняя граница отрезка.
+                        # Вдвоём с «с даты» вырезает любой кусок истории.
+                        # TESTER_PULT_V2: подписи у второй даты нет —
+                        # подсказка внутри поля говорит сама, а строка
+                        # панели узкая и каждый ярлык стоит места.
+                        toolbar_refs["po_datu_input"] = ui.element("div").style("display:none;align-items:center;")
+                        with toolbar_refs["po_datu_input"]:
+                            def _on_po_datu_change(e):   # TESTER_PULT_V1
+                                state["progon_po_datu"] = (e.value or "").strip()
+                            ui.input(
+                                value="", placeholder="по 30.07.2026",  # DATY_PO_CHELOVECHESKI_V1
+                                on_change=_on_po_datu_change,
+                            ).props(
+                                'dense outlined '
+                                'input-style="color:rgba(0,204,255,0.95);'
+                                'font-family:JetBrains Mono;font-size:11px;'
+                                'text-align:center;padding:0 2px;"'
+                            ).style("width:112px;")
+
+                        # TESTER_PULT_V2: поля «инструмент» здесь больше
+                        # нет — чем работать, говорит пост трейдера.
+                        # PARA_PO_POSTU_V1: подпись «ловить» теперь тут,
+                        # вплотную к своему полю.
                         toolbar_refs["bars_label"] = ui.element("div").style("display:none;align-items:center;gap:5px;")
                         with toolbar_refs["bars_label"]:
                             ui.label("ловить:").style("color:rgba(255,255,255,0.45);font-size:11px;")
@@ -2246,14 +4863,28 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                         _clean_btn.on("click", lambda: _ochistit_istoriyu())
                         with _clean_btn:
                             ui.html("🧹 ОЧИСТИТЬ")
+                        # KNOPKA_OTCHYOTA_K_OCHISTKE_V1: отчёт — сюда же.
+                        # Справа в своём ряду его перекрывали кнопки
+                        # тестера, как раньше «← Брат» и надпись Биржи.
+                        _otchyot_btn = ui.element("div").style(
+                            "display:flex;align-items:center;"
+                            "padding:6px 14px;border-radius:7px;"
+                            "font-size:12px;font-weight:700;cursor:pointer;"
+                            "background:rgba(99,130,255,0.08);"
+                            "color:rgba(150,175,255,0.85);"
+                            "border:1px solid rgba(99,130,255,0.3);")
+                        _otchyot_btn.on("click", lambda: ui.navigate.to(
+                            f"/otchyot/{tseh_id}", new_tab=True))
+                        with _otchyot_btn:
+                            ui.html("📄 ОТЧЁТ")
                     # UBRAT_NADPIS_BIRZHA_V1: надпись «БИРЖА · СОВЕТ» убрана —
                     # наезжала на кнопку ОЧИСТИТЬ, и была избыточна
                     # (страница подписана вкладками и хедером Совета).
-                    with ui.row().style("gap:8px; justify-content:flex-end;"):
-                        ui.button("← Брат", on_click=lambda: ui.navigate.to("/brat")).props("flat").style(
-                            "padding:6px 14px; border-radius:8px; font-size:12px; "
-                            "background:rgba(99,130,255,0.08); border:1px solid rgba(99,130,255,0.25); "
-                            "color:rgba(180,190,220,0.8);")
+                    # UBRAT_KNOPKU_BRAT_V1: кнопка «← Брат» убрана по
+                    # слову Шефа — не использовалась и жалась к
+                    # «ОЧИСТИТЬ». К Брату ходим через город.
+                    # KNOPKA_OTCHYOTA_K_OCHISTKE_V1: кнопка отчёта
+                    # переехала в общий ряд, к «ОЧИСТИТЬ».
 
                 with ui.element("div").classes("stage-content").style("flex:1; min-height:0; overflow:hidden;"):
                     with ui.element("div").classes("split-view").style("height:100%; min-height:0; overflow:hidden;"):
@@ -2282,10 +4913,26 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                                 ui.label("Отчёты агентов появятся здесь")
 
                 with ui.element("div").classes("floating-console"):
+                    # CHAT_KNOPKI_I_OSMYSLIT_V1: три маленькие иконки слева —
+                    # сохранить, достать, очистить. Золото — как у Брата.
+                    for _ico, _hint, _fn in (
+                            ("💾", "сохранить разговор", _sohranit_chat),
+                            ("📂", "достать разговор", _dostat_chat),
+                            ("🧹", "очистить разговор", _ochistit_razgovor)):
+                        ui.button(_ico, on_click=_fn).props("flat").tooltip(
+                            _hint).style(
+                            "font-size:1rem;padding:4px 8px;border-radius:9px;"
+                            "min-width:0;color:rgba(201,168,76,0.9);"
+                            "background:rgba(201,168,76,0.10);"
+                            "border:1px solid rgba(201,168,76,0.30);")
                     input_ref["element"] = ui.input(placeholder="Сообщение Совету...").props("borderless").style("flex:1")
                     input_ref["element"].on("keydown.enter", send_message)
                     # KABINET_GRAFIK_V1: посмотреть самому / дать посмотреть
-                    ui.button("👁 Взгляд", on_click=lambda: pokazat_kadr()).props(
+                    # STOP_I_VZGLYAD_V1: рука Шефа — вот она.
+                    ui.button("👁 Взгляд",
+                              on_click=lambda: (
+                                  state.__setitem__("взгляд_рукой", True),
+                                  pokazat_kadr())[-1]).props(
                         "flat no-caps").style(
                         "font-size:0.75rem; padding:8px 14px; border-radius:20px; "
                         "color:rgba(139,233,253,0.9); background:rgba(139,233,253,0.10); "
@@ -2300,6 +4947,20 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 with ui.element("div").classes("glass").style("margin-top:12px; flex-shrink:0; overflow:hidden;"):
                     vitals_ref["element"] = ui.element("div")
                     update_vitals()
+
+                # CHAT_KNOPKI_I_OSMYSLIT_V1: под аватаром, над приборами.
+                # Житель сам пишет вывод по последним своим словам, и
+                # вывод ложится ему в память КАК РАБОЧИЙ — иначе за
+                # столом выученное у Шефа не всплывёт никогда.
+                ui.button("🧠 ОСМЫСЛИТЬ", on_click=_osmyslit).props(
+                    "flat no-caps").tooltip(
+                    "Пусть сам напишет, что забрал из разговора — "
+                    "и запомнит это как рабочее").style(
+                    "margin-top:12px;width:100%;font-size:0.72rem;"
+                    "letter-spacing:0.08em;padding:8px 10px;"
+                    "border-radius:10px;color:rgba(201,168,76,0.9);"
+                    "background:rgba(201,168,76,0.10);"
+                    "border:1px solid rgba(201,168,76,0.30);")
 
                 with ui.element("div").classes("glass").style("margin-top:12px; flex-shrink:0; overflow:hidden;"):
                     ui.html('<div class="panel-title">ПРИБОРЫ</div>')
@@ -2339,3 +5000,129 @@ if __name__ in {"__main__", "__mp_main__"}:
 # GEMINI_PO_UMOLCHANIYU_V1 - marker
 
 # VAHTA_NOVAYA_SVECHA_V1 - marker
+
+# POLKA_IZ_TERMINALA_V1 - marker
+
+# SVYAZ_S_TERMINALOM_V1 - marker
+
+# OKNO_MOGLO_UYTI_V1 - marker
+
+# VAHTA_GORODSKAYA_V1 - marker
+
+# SVOYO_OKNO_V1 - marker
+
+# PANEL_TREYDERA_V1 - marker
+
+# PROSTO_I_ROVNO_V1 - marker
+
+# NAZNACHENIYA_PROCH_V1 - marker
+
+# VAHTA_ZA_POLKOY_V1 - marker
+
+# PODPISI_POD_PUZYRKAMI_V1 - marker
+
+# VAHTA_ZAVEDI_LYUBOY_V1 - marker
+
+# KABINET_ZNAET_CEH_V1 - marker
+
+# VZGLYAD_KAZHDOGO_V1 - marker
+
+# UBRAT_CHETVERTOGO_V1 - marker
+
+# VREMYA_V_KABINETE_V1 - marker
+
+# ISKATEL_V1 - marker
+
+# ODNA_KNOPKA_V1 - marker
+
+# OTPERET_V1 - marker
+
+# TUMBLER_V1 - marker
+
+# OTCHYOT_PROGONA_V1 - marker
+
+# PUZYRI_V1 - marker
+
+# PROGON_VIDNO_V1 - marker
+
+# TOCHKA_NE_TASHCHITSYA_V1 - marker
+
+# PROGON_VPERYOD_V1 - marker
+
+# KONEC_VOLNY_1_V1 - marker
+
+# PROGON_POSLE_SLOMA_V1 - marker
+
+# PROGON_BEZ_OKNA_V1 - marker
+
+# SVYAZ_I_PAPKA_V1 - marker
+
+# PROGON_S_DATY_V1 - marker
+
+# POISK_S_DATY_V1 - marker
+
+# PROGON_PODRYAD_V1 - marker
+
+# PROGON_PODRYAD_V2 - marker
+
+# KONEC_VOLNY_NE_SYEDEN_V1 - marker
+
+# TESTER_PULT_V1 - marker
+
+# TESTER_PULT_V2 - marker
+
+# PARA_PO_POSTU_V1 - marker
+
+# KABINET_ZHIVYOT_PRI_GORODE_V1 - marker
+
+# POLKA_NE_DUSHIT_SVYAZ_V1 - marker
+
+# PUZYR_KAK_V_AKADEMII_V1 - marker
+
+# PUZYR_PODSVETKA_V2 - marker
+
+# PUZYR_NE_OBRYVAETSYA_V3 - marker
+
+# RAZGOVOR_PRO_SVOY_INSTRUMENT_V1 - marker
+
+# PUZYR_STILEM_I_UPDATE_V4 - marker
+
+# PUZYR_PRYAMO_V_BRAUZER_V5 - marker
+
+# PUZYR_BEZ_GETHTMLELEMENT_V6 - marker
+
+# POKAZAT_KADR_NE_VESHAET_SERVER_V1 - marker
+
+# SVOYA_MODEL_POLEM_V1 - marker
+
+# ZHIVOY_KADR_V1 - marker
+
+# CHAT_KNOPKI_I_OSMYSLIT_V1 - marker
+
+# VZGLYAD_PO_VYBORU_V1 - marker
+
+# EDINYY_VYBOR_V1 - marker
+
+
+def _moment_zakrytiya(data_bara: str, etazh: str) -> str:
+    """Момент, когда этот бар закрылся. Не вышло посчитать — отдаём
+    как есть: лучше прежнее поведение, чем сломанный курсор."""
+    try:
+        from datetime import timedelta
+        import istoriya as _ist
+        import masshtab as _m
+        t0 = _ist.kak_vremya(data_bara)
+        minut = _m.minut(etazh)
+        if t0 is None or not minut:
+            return data_bara
+        return (t0 + timedelta(minutes=minut)).strftime(_ist.FORMAT)
+    except Exception as _e:
+        print(f"[ПРОГОН] момент закрытия не посчитался ({_e}) — "
+              f"ставлю курсор как раньше")
+        return data_bara
+
+# BUDIM_NA_SVOYOM_BARE_V1 - marker
+
+# POLKA_POMNIT_V1 - marker
+
+# SNYAT_BAR_GORODA_V1 - marker

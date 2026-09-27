@@ -43,7 +43,10 @@ OUT_DIR      = _HERE / "state" / "feed_out"   # сюда пишутся свод
 _TF_MAP = {
     "M1": 1, "M5": 5, "M10": 10, "M15": 15, "M30": 30,
     "H1": 16385, "H2": 16386, "H4": 16388, "H8": 16392, "H12": 16396,
-    "D1": 16408, "W1": 16409, "MN1": 16410,
+    # SVEZHEST_V1: W1 и MN1 были 16409 и 16410 — таких кодов у MT5
+    # нет. Недельный и месячный этажи город не получал НИКОГДА,
+    # а по ним считается компас: он был слеп по определению.
+    "D1": 16408, "W1": 32769, "MN1": 49153,
 }
 
 # Конфиг по умолчанию — создаётся при первом запуске, если файла нет.
@@ -128,7 +131,25 @@ def _fetch(mt5, symbol: str, tf_name: str, count: int) -> tuple[list, Optional[f
             info = mt5.symbol_info(symbol)
         point = float(info.point) if info and info.point else None
 
+        # SVEZHEST_V1: MT5 отдаёт пусто, пока история этажа не
+        # «прокачана» в терминале — особенно на старших. Лечится тем
+        # же приёмом, что и везде: выбрать символ в обзор рынка и
+        # повторить. Первый заход часто пустой, второй приносит.
         rates = mt5.copy_rates_from_pos(symbol, tf_code, 0, count)
+        if rates is None or len(rates) == 0:
+            import time as _t
+            try:
+                mt5.symbol_select(symbol, True)
+            except Exception:
+                pass
+            for _popytka in (1, 2):
+                _t.sleep(0.35)
+                rates = mt5.copy_rates_from_pos(symbol, tf_code, 0, count)
+                if rates is not None and len(rates):
+                    print(f"[FEED] {symbol} {tf_name}: пришли со "
+                          f"{_popytka + 1}-й попытки "
+                          f"(история подкачалась)")
+                    break
     finally:
         mt5.shutdown()
 
@@ -163,7 +184,26 @@ def _fetch(mt5, symbol: str, tf_name: str, count: int) -> tuple[list, Optional[f
 # Маршрут спуска Шефа: НЕ весь справочник MT5, а его человеческий шаг.
 # Намеренно пропущены H6/H3/H2/M20/M12 — это выбор крупности, не дыры.
 # Дно спуска — M5 ("до 5 минут максимум"): ниже шум съедает волну.
-_TF_LADDER = ["MN1", "W1", "D1", "H12", "H8", "H4", "H1", "M30", "M15", "M10", "M5"]
+# PARA_MESTA_V1: лесенка переехала в Биржа/masshtab.py —
+# ею пользуется не только насос, но и трейдер, и кадр.
+# Здесь оставлен только читающий конец, чтобы старые
+# вызовы step_down() работали как работали.
+try:
+    from masshtab import LESTNICA as _TF_LADDER
+except Exception:
+    _TF_LADDER = ["MN1", "W1", "D1", "H12", "H8", "H4",
+                  "H1", "M30", "M15", "M10", "M5"]
+
+
+def step_up(tf_name: str):
+    """Ступень ВВЕРХ по лесенке. Была потеряна: файл
+    mt5_feed_с_step_up.py лежал в уборке отдельной копией,
+    вместо того чтобы жить рукой здесь."""
+    try:
+        from masshtab import vyshe
+        return vyshe(tf_name)
+    except Exception:
+        return None
 
 
 def step_down(tf_name: str):
@@ -330,3 +370,5 @@ if __name__ == "__main__":
     hist = int(cfg.get("history_bars", 2000))
     for it in cfg.get("watchlist", []):
         _handle_instrument(it, hist)
+
+# SVEZHEST_V1 - marker

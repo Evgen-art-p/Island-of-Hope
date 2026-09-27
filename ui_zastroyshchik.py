@@ -32,7 +32,10 @@ POLYA_VIDNO = [
     ("Official_Name", "Имя места"),
     ("District", "Район острова"),
     ("Area_of_Responsibility", "Чем это место — одной строкой"),
+    ("тип", "Тип места"),   # RUKI_OSTROVA_V1: жилая — сюда прописывают
+    ("жильё", "Жильё — какое получает здесь каждый (для жилых мест)"),   # ZHILYO_KVARTALA_V1
 ]
+TIPY_MESTA = ["жилая", "публичная", "рабочая"]
 
 # под свёртками: как в городе, ничего не выброшено
 SVYORTKI = [
@@ -297,6 +300,20 @@ def page_zastroyshchik():
 
             polya_ui = {}
             for klyuch, podpis in POLYA_VIDNO:
+                if klyuch == "жильё":   # ZHILYO_KVARTALA_V1: длинное — полем
+                    polya_ui[klyuch] = ui.textarea(
+                        podpis, value=str(p.get("жильё") or "")).props(
+                        "dark dense outlined autogrow").style(
+                        "width:100%; font-size:0.78rem; margin-bottom:6px;")
+                    continue
+                if klyuch == "тип":   # RUKI_OSTROVA_V1: выбор, не ввод
+                    _t = str(p.get("тип") or "").strip().lower()
+                    polya_ui[klyuch] = ui.select(
+                        TIPY_MESTA, label=podpis,
+                        value=_t if _t in TIPY_MESTA else None).props(
+                        "dark dense outlined").style(
+                        "width:100%; font-size:0.78rem; margin-bottom:6px;")
+                    continue
                 polya_ui[klyuch] = ui.input(
                     podpis, value=str(p.get(klyuch, "") or "")).props(
                     "dark dense outlined").style(

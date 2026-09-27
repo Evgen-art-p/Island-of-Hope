@@ -1,3 +1,4 @@
+# VYREZAT_KLICHKI_V1
 # GRONDHEIM_CITY/Биржа/цеха/контора/слоты/исполнитель/мозг.py
 # ─────────────────────────────────────────────────────────────
 # ЖИВОЙ ИСПОЛНИТЕЛЬ — Казначей Биржи (штаб конторы), замыкает петлю
@@ -101,9 +102,15 @@ def _read_traders() -> dict:
     from hooks import load_trading_state
     t = load_trading_state()
     return {
-        "brut": t.get("brut", {}),
-        "avan": t.get("avan", {}),
-        "cons": t.get("cons", {}),
+        # SVEZHEST_V1: только СЕГОДНЯШНИЕ вердикты. Молчавший трейдер
+        # оставляет в столе прошлую запись, и она шла в дело как
+        # свежая: в логе 18.08 Совет A07/A08 не звал, а Исполнитель
+        # доложил их вердикты. Там был REJECTED — безобидно; но если
+        # бы лежал APPROVED с ценой, он поставил бы ордер по вчерашнему
+        # слову. Лучше пропустить вход, чем открыть по протухшему.
+        "brut": _svezhiy(t, "brut"),
+        "avan": _svezhiy(t, "avan"),
+        "cons": _svezhiy(t, "cons"),
     }
 
 
@@ -155,6 +162,66 @@ def _manage_positions_from_table(traders: dict) -> list:
         if action in ("", "ENTER", "WAIT", "HOLD"):
             continue
         magic = MAGIC[key]
+        # ZAYAVKA_I_SEYF_V1: рука для ВИСЯЩЕЙ заявки — переставить
+        # на новый разворотный бар или снять. Решает трейдер.
+        if action in ("MOVE_ORDER", "CANCEL"):
+            zv = next((p for p in positions
+                       if p.get("magic") == magic
+                       and p.get("status") == "PENDING"), None)
+            if not zv:
+                changed.append({"trader": TRADER_NAME[key],
+                                "action": action + "_REJECTED",
+                                "why": "висящей заявки нет"})
+                continue
+            if action == "CANCEL":
+                positions = [p for p in positions if p is not zv]
+                dirty = True
+                print(f"[ОРДЕР] 🚫 {zv.get('trader')} "
+                      f"{zv.get('direction')} @ {zv.get('entry')} "
+                      f"СНЯТ — трейдер передумал")
+                changed.append({"trader": TRADER_NAME[key],
+                                "action": "CANCEL",
+                                "entry": zv.get("entry")})
+                continue
+            ne, ns = v.get("entry"), v.get("stop")
+            dz = (zv.get("direction") or "").upper()
+            if (not isinstance(ne, (int, float))
+                    or not isinstance(ns, (int, float))
+                    or (dz == "LONG" and not ns < ne)
+                    or (dz == "SHORT" and not ns > ne)):
+                print(f"[ОРДЕР] ✗ {zv.get('trader')} {dz}: "
+                      f"переставить нельзя — вход {ne}, стоп {ns}")
+                changed.append({"trader": TRADER_NAME[key],
+                                "action": "MOVE_ORDER_REJECTED",
+                                "attempted": [ne, ns],
+                                "why": "нет цены/стопа или стоп не "
+                                       "по ту сторону от входа"})
+                continue
+            # ZAPAS_STOPA_V1: и у переставленной заявки — запас
+            _ns_bylo = ns
+            ns = round((ns + abs(ne - ns) * 0.2) if ns > ne
+                       else (ns - abs(ne - ns) * 0.2), 5)
+            print(f"[СТОП] 🛡 {zv.get('trader')} {dz}: стоп {_ns_bylo} → "
+                  f"{ns} — запас пятая часть риска")
+            _bylo = (zv.get("entry"), zv.get("stop"))
+            zv["entry"] = ne
+            zv["stop"] = ns
+            zv["stop_initial"] = ns
+            if "entry_avg" in zv:
+                zv["entry_avg"] = ne
+            # опора для городского переезда и снятия — новый бар
+            zv["signal_start"] = ns
+            zv["entry_fractal_price"] = ns
+            zv["_ждёт_баров"] = 0
+            # на баре перестановки не срабатывает — как при рождении
+            zv["_ждёт_с"] = _tekushchiy_bar(tstate)
+            dirty = True
+            print(f"[ОРДЕР] 🔄 {zv.get('trader')} {dz} ПЕРЕСТАВЛЕН "
+                  f"рукой: вход {_bylo[0]} → {ne}, стоп {_bylo[1]} → {ns}")
+            changed.append({"trader": TRADER_NAME[key],
+                            "action": "MOVE_ORDER",
+                            "from": list(_bylo), "to": [ne, ns]})
+            continue
         pos = next((p for p in positions
                     if p.get("magic") == magic and p.get("status") == "OPEN"), None)
         if not pos:
@@ -291,6 +358,27 @@ def _snyat_stol_vhoda() -> dict:
     return stol
 
 
+# ═══════════════════════════════════════════════════════════
+# ЧЕЙ РЫНОК (RABOTA_PO_PARE_V1)
+# ═══════════════════════════════════════════════════════════
+# Раньше Исполнитель знал один инструмент на всех — тот, что пришёл
+# сверху. Теперь у каждого трейдера свой, и позиция обязана родиться
+# с ним: иначе физика не отличит заявку по золоту от заявки по евро.
+_KEY_SLOT = {"brut": "A06", "avan": "A07", "cons": "A08"}
+
+
+def _rynok_treydera(key: str, market: dict) -> tuple:
+    """(инструмент, этаж) того, чей вердикт исполняем."""
+    try:
+        import vybor
+        r = vybor.rabota_dlya("торговый_хаос", _KEY_SLOT.get(key, ""))
+        if r.get("инструмент"):
+            return r["инструмент"], r.get("этаж") or market.get("timeframe")
+    except Exception:
+        pass
+    return market.get("symbol"), market.get("timeframe")
+
+
 def _open_positions_from_table(traders: dict, market: dict) -> list:
     """
     Для каждого APPROVED-трейдера кладёт позицию в trading_state["positions"]
@@ -303,8 +391,10 @@ def _open_positions_from_table(traders: dict, market: dict) -> list:
     from hooks import load_trading_state, save_trading_state
     tstate = load_trading_state()
     tstate.setdefault("positions", [])
+    # ZAYAVKA_BEZ_DUBLEY_V1: висящая заявка — тоже «уже есть».
+    # Вторую рядом не рождаем: свою двигают MOVE_ORDER, снимают CANCEL.
     open_magics = {p.get("magic") for p in tstate["positions"]
-                   if p.get("status") == "OPEN"}
+                   if p.get("status") in ("OPEN", "PENDING")}
 
     bar_time = market.get("bar_time", "")
     opened = []
@@ -334,8 +424,26 @@ def _open_positions_from_table(traders: dict, market: dict) -> list:
         # механизмом на ЭТОМ ЖЕ баре: high/low его накроют.
         # Отложка не мешает войти по рынку — она мешает войти
         # ТУДА, КУДА РЫНОК НЕ ХОДИЛ.
+        # RABOTA_PO_PARE_V1: позиция рождается ЗНАЯ свой рынок, и
+        # рынок этот — ТОГО трейдера, чей вердикт исполняем. Общего
+        # инструмента больше нет: у троих их три.
+        _sym, _tf = _rynok_treydera(key, market)
+        # ZAPAS_STOPA_V1 (решение Шефа 26.09): запас за краем
+        # разворотника — пятая часть риска. Треть её стопов была «не
+        # хватило размаха»: протащило за стоп на 0–20% и потом ушло
+        # в её сторону.
+        if (isinstance(entry, (int, float)) and isinstance(stop, (int, float))
+                and entry != stop):
+            _st_bylo = stop
+            _zap = abs(entry - stop) * 0.2
+            stop = (stop + _zap) if stop > entry else (stop - _zap)
+            stop = round(stop, 5)
+            print(f"[СТОП] 🛡 {TRADER_NAME[key]} {direction}: стоп "
+                  f"{_st_bylo} → {stop} — запас пятая часть риска")
         pos = {
             "trader":    TRADER_NAME[key],
+            "symbol":    _sym,
+            "timeframe": _tf,
             "magic":     magic,
             "direction": direction,
             "entry":     entry,
@@ -344,6 +452,10 @@ def _open_positions_from_table(traders: dict, market: dict) -> list:
             "lot":       v.get("lot"),
             "status":    "PENDING",   # OTLOZHENNY_ORDER_V1
             "_ждёт_с":   bar_time,
+            # PRISEDANIE_POSLE_V1: точка отмены — стоп заявки. Бар
+            # закрылся за ним до срабатывания — сигнал умер, город
+            # снимает заявку сам (правило в hooks уже есть).
+            "signal_start": stop,
             "_ждёт_баров": 0,
             "mode":      "PAPER",
             "opened_at": bar_time,
@@ -445,7 +557,7 @@ def _build_execution_log_facts(traders: dict) -> list:
     for key in ("brut", "avan", "cons"):
         v = traders.get(key, {})
         approved = _is_real_entry(v)
-        # VASILY_ISP_WATCH_V1: засада Консерватора — своя природа.
+        # VASILY_ISP_WATCH_V1: засада трейдера — своя природа.
         # WATCH не APPROVED и не REJECTED: трейдер назвал координаты и
         # ждёт созревания структуры. Доносим action + опору, чтобы
         # приёмник (hooks._persist_trading_state) родил WATCHING.
@@ -535,7 +647,7 @@ def chat_with_executor(question: str, last_run: Optional[dict] = None,
                 history.append({"role": r, "content": c})
 
     try:
-        return chat(system=system, user=question, history=history,
+        return _chat_s_mayakom(system=system, user=question, history=history,
                     agent_id="A09_ISPOLNITEL", slot_id="trading", temperature=_my_temp())
     except Exception as e:
         return f"⚠️ Исполнитель не смог ответить: {e}"
@@ -637,7 +749,7 @@ def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4") -> dict:
         system_full += "\n\n=== ТВОЁ СОСТОЯНИЕ (душа) ===\n" + soul
 
     try:
-        response = chat(system=system_full, user=user_msg,
+        response = _chat_s_mayakom(system=system_full, user=user_msg,
                         agent_id="A09_ISPOLNITEL", slot_id="trading", temperature=_my_temp())
     except Exception as e:
         # LLM упал — но позиции УЖЕ открыты кодом (петля цела). Летопись
@@ -688,3 +800,64 @@ def _my_temp():
         return None
 
 # VASILY_ISP_WATCH_V1 — маркер идемпотентности
+
+# RABOTA_PO_PARE_V1 - marker
+
+_KTO_YA = "Исполнитель"
+
+
+# ── RUKA_MAYAKA_V1: выход наружу и для конторы ───────────────
+# Раньше мозг конторы звал chat() — один проход, рук нет. Теперь тот
+# же разговор, но с рукой Маяка: не позвал — ничего не потрачено.
+def _chat_s_mayakom(**kw):
+    try:
+        import sys as _s
+        from pathlib import Path as _P
+        _g = _P(__file__).resolve()
+        for _ in range(8):
+            _g = _g.parent
+            if (_g / "ГОРОД" / "ruka_mayaka.py").exists():
+                break
+        if str(_g / "ГОРОД") not in _s.path:
+            _s.path.insert(0, str(_g / "ГОРОД"))
+        import ruka_mayaka
+        from llm import chat_with_tools
+        return chat_with_tools(tools_schema=ruka_mayaka.shema(),
+                               executors=ruka_mayaka.ruki(_KTO_YA),
+                               **kw)
+    except Exception as e:
+        print(f"[МАЯК] рука не подключилась ({e}) — говорю без неё")
+        from llm import chat as _chat_prostoy
+        return _chat_prostoy(**kw)
+
+
+# RUKA_MAYAKA_V1 - marker
+
+
+def _tekushchiy_bar(t: dict) -> str:
+    """Бар, на котором город стоит сейчас (его пишет рука рынка)."""
+    return str((t.get("рынок") or {}).get("бар") or t.get("бар") or "")
+
+
+def _svezhiy(t: dict, key: str) -> dict:
+    """SVEZHEST_V1: вердикт этого бара — или пусто.
+
+    Нет отметки бара (запись старая, до патча) — тоже пусто: чужого
+    вчерашнего слова нам не надо.
+    """
+    v = dict(t.get(key, {}) or {})
+    if not v:
+        return {}
+    bar_seychas = _tekushchiy_bar(t)
+    bar_verdikta = str(v.get("бар") or v.get("bar_time") or "")
+    if not bar_seychas:
+        return v            # город не сказал, какой бар — не судим строго
+    if bar_verdikta and bar_verdikta == bar_seychas:
+        return v
+    print(f"[ИСПОЛНИТЕЛЬ] ⏳ {key}: вердикт "
+          f"{'от ' + bar_verdikta if bar_verdikta else 'без отметки бара'} "
+          f"— не считаю (сейчас {bar_seychas})")
+    return {}
+
+
+# SVEZHEST_V1 - marker

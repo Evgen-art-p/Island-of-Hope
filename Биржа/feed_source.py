@@ -148,6 +148,23 @@ def _bars_from_folder(symbol: str, tf: str, count: int) -> Tuple[list, Optional[
     if not bars:
         return [], None
     point = _test_point(symbol)
+
+    # MASHINA_VREMENI_V1: если город поставлен в точку истории —
+    # отдаём только то, что к этому моменту уже ЗАКРЫЛОСЬ. Незакрытый
+    # бар старшего этажа содержит цены, которых тогда никто не знал;
+    # отдать его — значит показать трейдеру будущее.
+    try:
+        import istoriya
+        moment = istoriya.gde_stoim()
+    except Exception:
+        moment = ""
+    if moment:
+        do_momenta = [b for b in bars
+                      if istoriya.zakryt_li(b.get("date", ""), tf, moment)]
+        bars = do_momenta or []
+        if not bars:
+            return [], None
+
     tail = bars[-count:] if count and len(bars) > count else bars
     return tail, point
 
@@ -193,3 +210,5 @@ def bars(symbol: str, tf: str, count: int = 2000) -> Tuple[list, Optional[float]
     if mode == "tester":
         return _bars_from_folder(symbol, tf, count)
     return _bars_from_terminal(symbol, tf, count)
+
+# MASHINA_VREMENI_V1 - marker

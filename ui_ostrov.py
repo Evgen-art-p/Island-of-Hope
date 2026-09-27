@@ -87,7 +87,8 @@ def page_ostrov():
             "font-size:0.72rem; letter-spacing:0.10em; "
             "color:rgba(233,241,248,0.5); margin:6px 0 20px;")
         with ui.row().style("gap:10px; width:100%; flex-wrap:nowrap;"):
-            for nadpis, kuda in (("МАЯК", "/mayak"), ("РАБОТА", "/rabota"),
+            for nadpis, kuda in (("БИРЖА", "/torg"),  # OSTROV_DVER_BIRZHI_V1
+                                 ("МАЯК", "/mayak"), ("РАБОТА", "/rabota"),
                                  ("ЗАСТРОЙЩИК", "/zastroyshchik"),
                                  ("ПЕРЕВОЗКА", "/perevozka")):
                 ui.button(nadpis,
@@ -99,6 +100,31 @@ def page_ostrov():
                     "background:linear-gradient(135deg,"
                     "rgba(120,190,230,0.26),rgba(120,190,230,0.12)); "
                     "border:1px solid rgba(140,200,240,0.42);")
+
+        # RUKI_OSTROVA_V1: второй ряд — руки острова, пока нет Брата.
+        # Двери ведут в места, руки делают дело. Родится Брат —
+        # ряд переедет к нему целиком (ruki_ostrova.RYAD).
+        ui.label("руки острова").style(
+            "font-size:0.62rem; letter-spacing:0.16em; "
+            "text-transform:uppercase; color:rgba(233,241,248,0.4); "
+            "margin:16px 0 8px;")
+        with ui.row().style("gap:10px; width:100%; flex-wrap:wrap;"):
+            try:
+                import ruki_ostrova as _ruki
+                _ryad = _ruki.RYAD
+            except Exception as _e:
+                _ryad = []
+                ui.label(f"руки не подключились: {_e}").style(
+                    "font-size:0.7rem; color:#f0b27a;")
+            for nadpis, deystvie in _ryad:
+                ui.button(nadpis, on_click=deystvie).props(
+                    "flat no-caps").style(
+                    "min-width:130px; padding:9px 14px; border-radius:11px; "
+                    "font-size:0.72rem; font-weight:700; white-space:nowrap; "
+                    "letter-spacing:0.06em; color:#fff3dc; "
+                    "background:linear-gradient(135deg,"
+                    "rgba(230,180,110,0.24),rgba(230,180,110,0.10)); "
+                    "border:1px solid rgba(240,200,140,0.40);")
 
     # таскаем за плашку, но не за кнопки
     ui.add_body_html("""

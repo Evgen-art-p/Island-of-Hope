@@ -189,21 +189,58 @@ def resolve_para(ceh_id: str, slot: str, kvartal: str = "Биржа"):
 
 def resolve_by_magic(magic):
     """ОБРАТНЫЙ мостик: magic закрытой позиции → носитель.
-    Близнец resolve_para, тот же скан масок — magic живёт В МАСКЕ
-    (Закон Пары), отдельного реестра магиков нет. Честный None:
-    магик не найден ни в одной активной маске. Приводит к int, чтобы
-    100002 и "100002" резолвились одинаково. # MAGIC_IN_MASK_V1
+
+    MAGIC_PRI_MESTE_V3: ищем СНАЧАЛА МЕСТО, потом человека на нём.
+    Магик — свойство места, а не человека: сел — работаешь под
+    номером места, ушёл — номер остался на месте.
+
+    Раньше сканировались маски жителей, и 24.08 это дало чужой заряд:
+    номер 100002 носили и место A07, и хранитель архива, а в маске
+    Локи он остался живым с давних пор. Скан честно нашёл первого.
+
+    Нашлось два места с одним номером — НЕ УГАДЫВАЕМ: говорим вслух и
+    возвращаем пусто. Лучше потерянный вдох, чем вдох не тому.
     """
     try:
         m = int(magic)
     except (TypeError, ValueError):
         return None
+
+    mesta = []
+    try:
+        # посты читаем файлами: их формат — граница города, и она
+        # не меняется, а чужое API может отдать не все поля
+        for _f in sorted((CITY / "посты").glob("*/пост.json")):
+            _p = _read_json(_f) or {}
+            try:
+                if _p.get("magic") is not None and int(_p["magic"]) == m:
+                    mesta.append(_p)
+            except (TypeError, ValueError):
+                continue
+    except Exception as _e:
+        print(f"[РЕЕСТР] посты не прочлись ({_e}) — иду по маскам")
+
+    if len(mesta) > 1:
+        _kto = ", ".join(f"{p.get('цех') or '—'}/{p.get('слот') or '—'}"
+                         for p in mesta)
+        print(f"[РЕЕСТР] ⚠️  магик {m} у НЕСКОЛЬКИХ мест: {_kto}. "
+              f"Не угадываю — разведи номера.")
+        return None
+    if len(mesta) == 1:
+        _ceh = (mesta[0].get("цех") or "").strip()
+        _slot = (mesta[0].get("слот") or "").strip()
+        if _ceh and _slot:
+            return resolve_para(_ceh, _slot)
+
+    # запасной путь: старые маски, чтобы уже сидящие не выпали
     for z in _scan_zhiteli_maski():
         zm = z.get("magic")
         if zm is None:
             continue
         try:
             if int(zm) == m:
+                print(f"[РЕЕСТР] магик {m} найден только в маске "
+                      f"({z.get('имя')}) — место его не знает")
                 return z
         except (TypeError, ValueError):
             continue
@@ -259,3 +296,5 @@ if __name__ == "__main__":
 # RABOTA_DOKUMENT_V1 - marker
 
 # STANDART_RABOTY_V1 - marker
+
+# MAGIC_PRI_MESTE_V3 - marker

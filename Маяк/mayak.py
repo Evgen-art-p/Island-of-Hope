@@ -45,6 +45,22 @@ TAVILY_KEY = os.getenv("TAVILY_KEY", "")
 TAVILY_SEARCH = "https://api.tavily.com/search"
 TAVILY_EXTRACT = "https://api.tavily.com/extract"
 
+# MAYAK_403_V1: маяк ходил наружу БЕЗ ПРОКСИ — один во всём городе.
+# llm.py, Ректор, Библиотекарь, кабинет жителя — все зовут внешний мир
+# через PROXY_URL, а маяк шёл напрямую со своего адреса. Отсюда и
+# 403 Forbidden: провайдер не пускал. Читаем при каждом запросе, а не
+# один раз при импорте: маяк часто поднимают до загрузки .env.
+def _proxy():
+    return os.getenv("PROXY_URL", "") or None
+
+
+# Ключ шлём ЗАГОЛОВКОМ (нынешний способ Tavily) и оставляем в теле
+# (прежний). Так примут и старый эндпоинт, и новый — а 403 из-за
+# способа передачи ключа больше не случится.
+def _zagolovki() -> dict:
+    return {"Authorization": f"Bearer {TAVILY_KEY}",
+            "Content-Type": "application/json"}
+
 # по этим приметам маяк узнаёт свою локацию среди прочих
 PRIMETY = ("маяк", "lighthouse", "mayak", "beacon")
 
@@ -126,8 +142,8 @@ async def poisk(zapros: str, skolko: int = 5, gluboko: bool = False) -> dict:
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(TAVILY_SEARCH, json={
+        async with httpx.AsyncClient(timeout=30, proxy=_proxy()) as client:
+            r = await client.post(TAVILY_SEARCH, headers=_zagolovki(), json={
                 "api_key": TAVILY_KEY,
                 "query": zapros,
                 "max_results": max(1, min(int(skolko or 5), 10)),
@@ -162,8 +178,8 @@ async def dostat(url: str) -> dict:
     import httpx
     if TAVILY_KEY:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                r = await client.post(TAVILY_EXTRACT, json={
+            async with httpx.AsyncClient(timeout=30, proxy=_proxy()) as client:
+                r = await client.post(TAVILY_EXTRACT, headers=_zagolovki(), json={
                     "api_key": TAVILY_KEY, "urls": [url]})
                 if r.status_code == 200:
                     res = (r.json().get("results") or [{}])[0]
@@ -264,3 +280,5 @@ def zapisat_vizit(kto: str, zapros: str, nashlos: bool):
 
 
 # GOROD_MAYAK_V1 — маркер идемпотентности
+
+# MAYAK_403_V1 - marker

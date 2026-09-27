@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "updated": "2026-09-27T14:22:09.480565",
+  "iskra": {
+    "t1_status": "NOT_FOUND",
+    "zero_point_price": null,
+    "history_dna": "",
+    "alive": false,
+    "rodilas_na_bare": null
+  },
+  "positions": [],
+  "vzglyad_shefa": {
+    "путь": "None",
+    "подпись": "XAUUSD D1",
+    "когда": "2026-09-27T14:22:09"
+  },
+  "feed": {
+    "mode": "tester",
+    "symbol": "EURUSD"
+  }
+}

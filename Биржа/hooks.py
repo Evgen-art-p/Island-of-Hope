@@ -55,10 +55,62 @@ ATLAS_PATH = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные" / "atlas_t
 # Закрывает две дыры:
 #   1. Состояние Искры между прогонами (t1_status — машина состояний)
 #   2. Открытые позиции между прогонами (что закрывать по exit_bell)
-STATE_PATH = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные" / "trading_state.json"
+# ═══════════════════════════════════════════════════════════
+# SVOY_STOL_CEHA_V1 — У КАЖДОГО ЦЕХА СВОЙ СТОЛ
+# ═══════════════════════════════════════════════════════════
+# Стол был один на всю Биржу: `Биржа/данные/trading_state.json`.
+# Пока цех один — незаметно. Поставь второй такой же (женский и
+# мужской) — и они начнут писать вердикты в одну тетрадь и затирать
+# друг друга.
+#
+# А в манифесте цеха уже давно объявлено своё: `журналы/pnl.jsonl`,
+# `журналы/atlas.jsonl`. Задумка была верной, просто код брал общий
+# файл. Теперь берёт цеховой.
+#
+# Цех говорит Совет перед прогоном (`postavit_ceh`). Не сказали —
+# работаем по-старому, на общем столе: ничего не ломается.
+_OBSHCHIY_DIR = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные"
+STATE_PATH = _OBSHCHIY_DIR / "trading_state.json"      # запасной, общий
+PNL_PATH = _OBSHCHIY_DIR / "trading_pnl.jsonl"         # запасной, общий
 
-# Журнал PnL сделок (НЕ billing_ledger — тот про LLM-расходы)
-PNL_PATH = _REPO / "GRONDHEIM_CITY" / "Биржа" / "данные" / "trading_pnl.jsonl"
+_TEKUSHCHIY_CEH = ""
+
+
+def postavit_ceh(ceh_id: str = ""):
+    """Чей стол накрываем. Зовётся Советом в начале прогона."""
+    global _TEKUSHCHIY_CEH
+    _TEKUSHCHIY_CEH = (ceh_id or "").strip()
+
+
+def _dom_ceha() -> Path:
+    if not _TEKUSHCHIY_CEH:
+        return _OBSHCHIY_DIR
+    return (_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / _TEKUSHCHIY_CEH
+            / "данные")
+
+
+def _put_stola() -> Path:
+    """Стол этого цеха. Первый раз — переносим общий, чтобы не начинать
+    с чистого листа: открытые позиции и состояние остаются при цехе."""
+    d = _dom_ceha()
+    p = d / "trading_state.json"
+    if not _TEKUSHCHIY_CEH:
+        return p
+    if not p.exists() and STATE_PATH.exists():
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            p.write_text(STATE_PATH.read_text(encoding="utf-8"),
+                         encoding="utf-8")
+            print(f"[СТОЛ] переехал в цех {_TEKUSHCHIY_CEH} "
+                  f"(общий остался как был)")
+        except Exception as e:
+            print(f"[СТОЛ] не смог перенести общий стол: {e}")
+    return p
+
+
+def _put_pnl() -> Path:
+    return (_dom_ceha() / "trading_pnl.jsonl") if _TEKUSHCHIY_CEH \
+        else PNL_PATH
 
 # Magic numbers — константа КОДА (реальный MT5-мост возьмёт отсюда,
 # не из памяти LLM). Промт A09 дублирует таблицу для летописи.
@@ -83,23 +135,47 @@ _DEFAULT_STATE = {
 
 
 def load_trading_state() -> dict:
-    """Читает рабочую память цеха. Если файла нет — дефолт."""
-    if not STATE_PATH.exists():
+    """Читает рабочую память ЭТОГО цеха. Файла нет — дефолт."""
+    p = _put_stola()
+    if not p.exists():
         return json.loads(json.dumps(_DEFAULT_STATE))
+    # ODNA_YAMA_I_STOL_V1: споткнулись о недописанный — пробуем ещё.
+    import time as _time_ch
+    for _k_ch in range(3):
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            _time_ch.sleep(0.1)
     try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        return json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        print(f"[STATE] ⚠️  Повреждён trading_state.json ({e}) — дефолт")
+        print(f"[STATE] ⚠️  Повреждён {p.name} ({e}) — дефолт")
         return json.loads(json.dumps(_DEFAULT_STATE))
 
 
 def save_trading_state(tstate: dict):
-    """Сохраняет рабочую память цеха."""
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    """Сохраняет рабочую память ЭТОГО цеха."""
+    p = _put_stola()
+    p.parent.mkdir(parents=True, exist_ok=True)
     tstate["updated"] = datetime.now().isoformat()
-    STATE_PATH.write_text(
-        json.dumps(tstate, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[STATE] 💾 trading_state сохранён: "
+    # ODNA_YAMA_I_STOL_V1: пишем во временный файл и подменяем одним
+    # махом — недописанного стола не увидит ни страница, ни прогон.
+    _tekst_st = json.dumps(tstate, ensure_ascii=False, indent=2)
+    _tmp_st = p.with_name(p.name + ".tmp")
+    try:
+        import os as _os_st, time as _time_st
+        _tmp_st.write_text(_tekst_st, encoding="utf-8")
+        for _k_st in range(10):
+            try:
+                _os_st.replace(_tmp_st, p)
+                break
+            except PermissionError:
+                _time_st.sleep(0.05)
+        else:
+            p.write_text(_tekst_st, encoding="utf-8")
+    except Exception:
+        p.write_text(_tekst_st, encoding="utf-8")
+    print(f"[STATE] 💾 стол сохранён ({_TEKUSHCHIY_CEH or 'общий'}): "
           f"t1={tstate['iskra']['t1_status']}, "
           f"позиций={len(tstate['positions'])}")
 
@@ -129,7 +205,9 @@ def save_trading_state(tstate: dict):
 # Код, без LLM — экономим токены Шефа на каждом баре.
 # ═══════════════════════════════════════════════════════════
 
-def proverit_tochku(md: dict) -> dict:
+def proverit_tochku(md: dict, para: str = "") -> dict:
+    # TOCHKA_ROZHDAETSYA_V1: para — чья это точка («SYMBOL TF»).
+    # Пусто — старый общий блок, ничего из прежнего не ломается.
     """
     Кодовая (без LLM) проверка живости точки c на текущем баре.
     Читает/пишет trading_state["iskra"]. Зовётся на КАЖДОМ баре
@@ -140,7 +218,7 @@ def proverit_tochku(md: dict) -> dict:
     "changed" — точка поменяла состояние на этом баре (для ленты).
     """
     tstate = load_trading_state()
-    isk = tstate.setdefault("iskra", {})
+    isk = _blok_tochki(tstate, para)   # TOCHKA_ROZHDAETSYA_V1
     alive = bool(isk.get("alive"))
     zp    = isk.get("zero_point_price")
     napr  = isk.get("trend_direction") or isk.get("napravlenie")
@@ -159,11 +237,14 @@ def proverit_tochku(md: dict) -> dict:
     mfi_type = (md.get("mfi", {}) or {}).get("type")
 
     # ── 1. подпитка той же стороной — ПРОВЕРЯЕТСЯ ПЕРВОЙ ──
-    # Порядок важен (найдено тестом при отладке патча): пробой
-    # zero_point_price свежим баром той же стороны с GREEN/SQUAT —
-    # это НЕ слом, это новая, более глубокая версия ТОЙ ЖЕ точки.
-    # Слом — только когда пробой ничем не подтверждён.
-    if wf.get("bdb_dir") == napr and mfi_type in ("GREEN", "SQUAT"):
+    # MFI_ORIENTIR_NE_SIGNAL_V1 (05.09): было условием — новый некрон
+    # той же стороны без GREEN/SQUAT проваливался в структурный слом,
+    # хотя сам факт нового более глубокого некрона уже делает его
+    # новой версией точки (живой пример «квадрата» 17-19.08 — оба
+    # некрона честно прошли формулу, MFI при этом ни при чём). Слово
+    # Шефа: «MFI — ориентир, не сигнал». Убрано как ворота; MFI
+    # остаётся в reason фактом на столе, не условием жизни точки.
+    if wf.get("bdb_dir") == napr:
         novaya_zp = None
         if napr == "BULL" and low is not None:
             novaya_zp = min(zp, low)      # новое, более глубокое дно
@@ -174,7 +255,7 @@ def proverit_tochku(md: dict) -> dict:
             isk["rodilas_na_bare"]  = md.get("bar_time")
             save_trading_state(tstate)
             return {"alive": True,
-                    "reason": f"подпитка {mfi_type}: точка обновлена → {novaya_zp}",
+                    "reason": f"подпитка (MFI {mfi_type}): точка обновлена → {novaya_zp}",
                     "changed": True, "direction": napr}   # TOCHKA_NAPRAVLENIE_V1
 
     # ── 2. структурный слом — СТРОГО ПО CLOSE (KALIBROVKA_POROGA_V1):
@@ -202,7 +283,16 @@ def proverit_tochku(md: dict) -> dict:
     if twr.get("neutral") is True:
         _n = int(isk.get("neutral_bars_count", 0) or 0) + 1
         isk["neutral_bars_count"] = _n
-        if _n >= 3:
+        # TOCHKA_DO_SLOMA_V1: смерть по ритму СНЯТА.
+        # Слово Шефа: сколько поймано точек — столько и должно быть от
+        # них волн, от истинных. Значит исходов два: цена ушла за точку
+        # (не истинная) или ждём её волну сколько надо. Третьего нет.
+        # А это правило («3 бара нейтрали») — наше выдуманное число,
+        # его нет ни у Вильямса, ни у Котина, ни в каноне. Оно убивало
+        # 31 точку из 89 — треть, и все они могли оказаться истинными.
+        # Нейтраль остаётся ПОКАЗАНИЕМ: счётчик считается и лежит в
+        # столе, трейдер видит, что ритм замер, и решает сам.
+        if False:
             isk["alive"] = False
             isk["neutral_bars_count"] = 0
             save_trading_state(tstate)
@@ -211,7 +301,7 @@ def proverit_tochku(md: dict) -> dict:
                     "changed": True, "direction": napr}   # TOCHKA_NAPRAVLENIE_V1
         save_trading_state(tstate)
         return {"alive": True,
-                "reason": f"TWR нейтрален {_n}/3 — ещё жива, считаю",
+                "reason": f"TWR нейтрален {_n} бар(а) — жива, ритм замер",
                 "changed": False, "direction": napr}
     else:
         if isk.get("neutral_bars_count"):
@@ -285,82 +375,10 @@ def gate_hans(chain_data: dict) -> bool:
 # ХУКИ КАРТРИДЖА
 # ════════════════════════════════════════════════════════════
 
-def on_before_run(state: dict) -> dict:
-    """
-    Вызывается перед стартом цепочки.
-    Идёт в williams_core → забирает market_data → кладёт в chain_data.
 
-    Параметры из state["settings"]:
-      csv_path:   путь к CSV файлу (ШАГ 1 — бэктест)
-      symbol:     тикер ("EURUSD", "XAUUSD", ...)
-      timeframe:  таймфрейм ("D1", "H4", "H1", ...)
-      bars_limit: сколько последних баров брать (0 = все)
-      point:      _Point override (опционально)
-    """
-    settings   = state.get("settings", {})
-    csv_path   = settings.get("csv_path", "")
-    symbol     = settings.get("symbol",    "UNKNOWN")
-    timeframe  = settings.get("timeframe", "D1")
-    bars_limit = int(settings.get("bars_limit", 0))
-    point      = float(settings["point"]) if settings.get("point") else None
-
-    print(f"\n[TRADING] ⚔️  Военный Совет запускается")
-    print(f"[TRADING]    Символ: {symbol} | ТФ: {timeframe}")
-
-    # ── Рабочая память цеха: загружаем ПЕРЕД любым режимом ──
-    tstate = load_trading_state()
-    cd = state.setdefault("chain_data", {})
-    cd["history_dna"]          = tstate["iskra"].get("history_dna", "")
-    cd["prev_t1_status"]       = tstate["iskra"].get("t1_status", "NOT_FOUND")
-    cd["prev_zero_point_price"] = tstate["iskra"].get("zero_point_price")
-    cd["open_positions"]       = tstate.get("positions", [])
-    if cd["open_positions"]:
-        print(f"[STATE] 📂 Открытых позиций: {len(cd['open_positions'])}")
-    if cd["prev_t1_status"] != "NOT_FOUND":
-        print(f"[STATE] 📂 Искра помнит: t1={cd['prev_t1_status']}, "
-              f"Точка Ноль={cd['prev_zero_point_price']}")
-
-    if csv_path:
-        bars = read_mt5_csv(csv_path)
-        if bars_limit > 0:
-            bars = bars[-bars_limit:]
-    else:
-        # market_data уже передан напрямую (webhook / MT5 polling)
-        if state.get("chain_data", {}).get("market_data"):
-            print("[TRADING] 📡 market_data получен напрямую (webhook режим)")
-            return state
-        print("[TRADING] ⚠️  csv_path не задан и market_data отсутствует")
-        return state
-
-    if not bars:
-        print("[TRADING] ❌ Нет данных — Совет не стартует")
-        return state
-
-    market_data = build_market_data(bars, symbol=symbol,
-                                    timeframe=timeframe, point=point)
-    if not market_data:
-        print("[TRADING] ❌ williams_core вернул пустой результат")
-        return state
-
-    state.setdefault("chain_data", {})["market_data"] = market_data
-    # history_dna уже загружен из trading_state.json выше
-
-    # Подушка безопасности Вильямса: экстремум второго бара назад.
-    # Кладём в chain_data, чтобы _prepare_trade_setup взял оттуда.
-    cd = state.setdefault("chain_data", {})
-    if len(bars) >= 3:
-        cd["_bar_back2_low"]  = bars[-3]["low"]
-        cd["_bar_back2_high"] = bars[-3]["high"]
-
-    _settle_positions(state)          # закрытие позиций — стоп / exit_bell
-    _print_market_summary(market_data)
-
-    # ZIGZAG_CORE_V1: наблюдатель ног — параллельно, ничего не гейтит
-    _noga_ev = proverit_nogu(market_data)
-    if _noga_ev:
-        print(f"[НОГА] {_noga_ev.get('event')}: {_noga_ev}")
-
-    return state
+# UBORKA_03_09_V1: on_before_run() убрана — старый CSV/webhook-путь,
+# ни одного вызова по репо с 14.08 (бары идут через
+# rynok_novyy_bar). # {MARKER} - marker
 
 
 def on_before_agent(state: dict, agent_id: str) -> dict:
@@ -532,9 +550,17 @@ def _treyling_za_zubami(state: dict):
         return
 
     allig = md.get("alligator", {}) or {}
+    # ZUBY_SO_SDVIGOM_V2: ряд Зубов в market_data не доезжает —
+    # там только числа. Ядро (ALLIGATOR_SO_SDVIGOM_V1) уже отдаёт
+    # Зубы СО СДВИГОМ — те, что под свечой. Их и берём.
     teeth = allig.get("teeth")
+    # ZAYAVKA_I_SEYF_V1: сейф — когда пасть открыта и линии в ряд.
+    _jaw = allig.get("jaw")
+    _lips = allig.get("lips")
     close = (md.get("price", {}) or {}).get("close")
     if teeth is None or close is None:
+        if positions and close is not None:
+            print("[ТРЕЙЛ] ⚠️  Зубов со сдвигом нет — стоп не тяну")
         return
 
     tstate = load_trading_state()
@@ -549,11 +575,24 @@ def _treyling_za_zubami(state: dict):
         entry = pos.get("entry")
         if old is None or entry is None:
             continue
+        # POCHINIT_SCHYOT_R_V1: вторая защита — для позиций,
+        # открытых раньше патча. Запоминаем стоп ДО того, как
+        # сдвинем его: потом восстановить будет неоткуда.
+        pos.setdefault("stop_initial", old)
 
         if direction == "LONG":
             # цена ушла под Зубы — пирамида мертва, стоп не тянем
             # (её добьёт _settle_positions по стопу или колоколу)
             if close < teeth:
+                continue
+            # ZAYAVKA_I_SEYF_V1 (слово Шефа 23.09): в болтанке сейфа
+            # нет. Тянем, только когда линии в ряд вверх и цена
+            # над ними: Губы > Зубы > Челюсть, цена выше Губ.
+            if not (_lips is not None and _jaw is not None
+                    and _lips > teeth > _jaw and close > _lips):
+                if teeth > old:
+                    print(f"[ТРЕЙЛ] ⏸ {pos.get('trader')} LONG: линии "
+                          f"не в ряд — болтанка, стоп стоит {old}")
                 continue
             novy = teeth
             if novy <= old:          # только в защиту
@@ -562,6 +601,14 @@ def _treyling_za_zubami(state: dict):
                 continue
         elif direction == "SHORT":
             if close > teeth:
+                continue
+            # ZAYAVKA_I_SEYF_V1: зеркально — Губы < Зубы < Челюсть,
+            # цена ниже Губ.
+            if not (_lips is not None and _jaw is not None
+                    and _lips < teeth < _jaw and close < _lips):
+                if teeth < old:
+                    print(f"[ТРЕЙЛ] ⏸ {pos.get('trader')} SHORT: линии "
+                          f"не в ряд — болтанка, стоп стоит {old}")
                 continue
             novy = teeth
             if novy >= old:
@@ -708,77 +755,108 @@ ORDER_EXPIRE_BARS = 10   # не пробил за 10 баров — структ
 
 
 # PEREEZD_ZAYAVKI_V1: переезд заявки за новым фракталом (Вильямс) ──────
+# PEREEZD_NA_NEKRON_NE_FRAKTAL_V1: окно "рядом" для приседающего —
+# в барах. Не высечено в камне, можно поправить и перезапустить патч.
+# PRISEDANIE_PRAVDA_V1 (слово Шефа 23.09): три бара — разворотник и
+# два до него. Было 3 — это четыре бара (0..3).
+# TRI_BARA_V2 (слово Шефа 25.09): три бара до разворотника.
+_OKNO_BAROV_PRISED = 3
+
+_CHASY_ETAZHA = {
+    "M1": 1 / 60, "M5": 5 / 60, "M10": 10 / 60, "M15": 15 / 60,
+    "M30": 0.5, "H1": 1, "H2": 2, "H4": 4, "H8": 8, "H12": 12,
+    "D1": 24, "W1": 24 * 7,
+}
+
+
+def _prisel_ryadom(md, okno_barov=_OKNO_BAROV_PRISED):
+    """Приседающий на этом баре или в пределах последних `okno_barov`
+    баров до него — MFI.md: дорожка не обязана стоять прямо на
+    Некроне, важно что рынок готовился рядом."""
+    last = (md.get("squat") or {}).get("last_squat") or {}
+    if not last:
+        return False
+    try:
+        from datetime import datetime
+        fmt = "%Y.%m.%d %H:%M"
+        t_bar = datetime.strptime(str(md.get("bar_time")), fmt)
+        t_sq = datetime.strptime(str(last.get("date")), fmt)
+    except Exception:
+        return True  # даты не сравнились — не блокируем зря
+    chas = _CHASY_ETAZHA.get(str(md.get("timeframe") or "H1").upper(), 1)
+    if chas <= 0:
+        return True
+    razn_barov = (t_bar - t_sq).total_seconds() / 3600 / chas
+    return 0 <= razn_barov <= okno_barov
+
+
 def _pereezd_zayavki(pos, md):
-    """Проверяет PENDING-заявку против текущей структуры фракталов.
+    """Проверяет PENDING-заявку против НОВОГО РАЗВОРОТНИКА (Некрона),
+    не голого фрактала — окружаем бар, а не геометрическую точку.
+
+    Переезд требует ТУ ЖЕ тройку, что и вход — без сравнения
+    "дальше/лучше" (по книге любой новый сигнал сносит старый):
+      1. Некрон в сторону сделки.
+      2. AO-дивер в сторону сделки.
+      3. Приседающий рядом (на этом баре или в последних барах).
+
     Возвращает:
-      "MOVED"   — переехала на новый фрактал (pos обновлён на месте);
+      "MOVED"   — переехала на новый разворотник (pos обновлён);
       "CANCEL"  — цена вернулась к старту, сигнал мёртв (снять);
       None      — ничего, ждём дальше.
-    Спред-поправка та же, что при рождении.
     """
     d = (pos.get("direction") or "").upper()
-    fr = md.get("fractals", {}) or {}
     price = md.get("price", {}) or {}
     close = price.get("close")
+    cur_high = price.get("high")
+    cur_low = price.get("low")
     point = md.get("point") or 0.01
     sp_pts = (md.get("mfi", {}) or {}).get("spread")
     sp = (float(sp_pts) * float(point)) if sp_pts is not None else 0.0
-    punkt = 10 * float(point or 0.01)  # PUNKT_OT_POINT_V1: пункт = 10×point
 
     if close is None:
         return None
 
-    if d == "LONG":
-        up = fr.get("last_up") or {}
-        down = fr.get("last_down") or {}
-        up_px = up.get("price") if isinstance(up, dict) else None
-        up_idx = up.get("bar_index") if isinstance(up, dict) else None
-        down_px = down.get("price") if isinstance(down, dict) else None
+    necron = md.get("necron_bar") or {}
+    necron_dir = necron.get("direction")
+    necron_price = necron.get("price")
 
-        # 2. возврат к старту сигнала — снять
+    if d == "LONG":
         start = pos.get("signal_start")
         if start is not None and close < start:
             return "CANCEL"
 
-        # 1. новый ВЕРХНИЙ фрактал (другой bar_index) ВЫШЕ прежнего → переезд
-        old_idx = pos.get("entry_fractal_idx")
-        old_px = pos.get("entry_fractal_price")
-        if (up_px is not None and up_idx is not None
-                and up_idx != old_idx
-                and (old_px is None or up_px > old_px)):
-            pos["entry"] = round(up_px + 2 * sp, 6)          # Buy Stop + спред
-            if down_px is not None:
-                pos["stop"] = round(down_px, 6)              # под новый низ
-                pos["stop_initial"] = pos["stop"]            # R от новой опоры
-                pos["signal_start"] = down_px                # новый старт сигнала
-            pos["entry_fractal_price"] = up_px
-            pos["entry_fractal_idx"] = up_idx
-            pos["_ждёт_баров"] = 0                            # счётчик сброшен
+        # PEREEZD_BEZ_SRAVNENIYA_V1 (15.09, Шеф): книга не требует
+        # сравнения "дальше/лучше" — любой новый сигнал того же
+        # направления сносит старый ордер. Если новый Некрон окажется
+        # менее выгодным (ближе к цене) — рынок и так возьмёт его
+        # раньше, сравнивать незачем.
+        if (necron_dir == "BULL" and necron_price is not None
+                and md.get("divergence_ao")
+                and _prisel_ryadom(md)):
+            if cur_high is not None:
+                pos["entry"] = round(cur_high + 2 * sp, 6)   # Buy Stop + 2 спреда
+            pos["stop"] = round(necron_price, 6)             # под низ Некрона
+            pos["stop_initial"] = pos["stop"]
+            pos["signal_start"] = necron_price
+            pos["entry_fractal_price"] = necron_price
+            pos["_ждёт_баров"] = 0
             return "MOVED"
 
     elif d == "SHORT":
-        up = fr.get("last_up") or {}
-        down = fr.get("last_down") or {}
-        down_px = down.get("price") if isinstance(down, dict) else None
-        down_idx = down.get("bar_index") if isinstance(down, dict) else None
-        up_px = up.get("price") if isinstance(up, dict) else None
-
         start = pos.get("signal_start")
         if start is not None and close > start:
             return "CANCEL"
 
-        old_idx = pos.get("entry_fractal_idx")
-        old_px = pos.get("entry_fractal_price")
-        if (down_px is not None and down_idx is not None
-                and down_idx != old_idx
-                and (old_px is None or down_px < old_px)):
-            pos["entry"] = round(down_px - 3 * punkt, 6)     # Sell Stop − 3 пункта
-            if up_px is not None:
-                pos["stop"] = round(up_px + 2 * sp, 6)       # над новым верхом
-                pos["stop_initial"] = pos["stop"]
-                pos["signal_start"] = up_px
-            pos["entry_fractal_price"] = down_px
-            pos["entry_fractal_idx"] = down_idx
+        if (necron_dir == "BEAR" and necron_price is not None
+                and md.get("exit_bell")
+                and _prisel_ryadom(md)):
+            if cur_low is not None:
+                pos["entry"] = round(cur_low - sp, 6)        # Sell Stop − 1 спред
+            pos["stop"] = round(necron_price, 6)             # над high Некрона
+            pos["stop_initial"] = pos["stop"]
+            pos["signal_start"] = necron_price
+            pos["entry_fractal_price"] = necron_price
             pos["_ждёт_баров"] = 0
             return "MOVED"
 
@@ -949,7 +1027,27 @@ def _aktivirovat_ordera(state: dict):
     dirty = False
     ostalis = []
 
+    _bar_sym = str(md.get("symbol", "") or "").strip().upper()
     for pos in live:
+        # RABOTA_PO_PARE_V1: заявку берёт ТОЛЬКО её собственный рынок.
+        # Иначе заявка Синди по золоту ждала бы, пока до неё дойдёт
+        # евро, и умирала бы «протухшей» на живом сигнале.
+        _psym = (pos.get("symbol") or "").strip().upper()
+        if _bar_sym and _psym and _psym != _bar_sym:
+            ostalis.append(pos)
+            continue
+        # UBRAT_CHETVERTOGO_V1: симметрия с закрытием. Заявка без
+        # инструмента (открыта до 14.08) НЕ активируется чужим баром:
+        # в логе 15.08 такая заявка по 0.708 «активировалась» баром
+        # евро по 1.15 и стала позицией, которую закрытие потом
+        # трогать отказалось. Защита в одной руке из двух хуже, чем
+        # никакой — она плодит вечные позиции.
+        if _bar_sym and not _psym:
+            print(f"[ОРДЕР] ⚠️  {pos.get('trader')} без инструмента "
+                  f"(открыта до 14.08) — не активирую баром {_bar_sym}. "
+                  f"Решение по старым заявкам за Шефом.")
+            ostalis.append(pos)
+            continue
         # VASILY_ZASADA_V1: засада Консерватора — своя ветка, до PENDING.
         if pos.get("status") == "WATCHING":
             _sostoyanie = _proverit_otkat_vasily(pos, md)
@@ -992,12 +1090,33 @@ def _aktivirovat_ordera(state: dict):
             ostalis.append(pos)
             continue
 
+        # ZAYAVKA_SLED_BAR_V1: на баре своего рождения заявка не
+        # активируется. Уровни сняты С ЭТОГО бара — он накрывает их по
+        # построению, и «рынок дошёл» получалось само собой, в тот же
+        # миг, когда ордер поставили. А следом бар накрывал и стоп:
+        # 24.08 обе сделки умерли ровно так, минус R по арифметике, а
+        # не по рынку. Отложка ждёт БУДУЩЕГО движения; бар, по
+        # которому считали, — прошлое.
+        _rodilas_na = str(pos.get("_ждёт_с") or "")
+        if _rodilas_na and _rodilas_na == str(bar_time or ""):
+            print(f"[ОРДЕР] ⏳ {pos.get('trader')} {d} @ {entry} — "
+                  f"поставлен на этом баре, ждёт следующего")
+            ostalis.append(pos)
+            continue
+
         srabotal = ((d == "LONG"  and high >= entry) or
                     (d == "SHORT" and low  <= entry))
 
         if srabotal:
             pos["status"] = "OPEN"
             pos["opened_at"] = bar_time      # ВРЕМЯ РЕАЛЬНОГО ВХОДА
+            # POCHINIT_SCHYOT_R_V1: запоминаем риск НА ВХОДЕ.
+            # Без этого поля счёт брал ТЕКУЩИЙ стоп — и после
+            # трейлинга любой стоп-аут писался как −1.0R, хотя
+            # реально терялось три пункта вместо восьмидесяти.
+            # В миг входа текущий стоп И ЕСТЬ первоначальный.
+            if pos.get("stop") is not None:
+                pos.setdefault("stop_initial", pos["stop"])
             pos.pop("_ждёт_с", None)
             pos.pop("_ждёт_баров", None)
             dirty = True
@@ -1021,9 +1140,19 @@ def _aktivirovat_ordera(state: dict):
             ostalis.append(pos)
             continue          # PENDING на новом уровне
 
-        # не сработал — считаем, сколько ждёт
-        zhdyot = pos.get("_ждёт_баров", 0) + 1
-        pos["_ждёт_баров"] = zhdyot
+        # не сработал — считаем, сколько ждёт.
+        # ZAYAVKA_ZHDYOT_BARY_V1: считаем БАРЫ, а не вызовы. Прогон
+        # зовёт рыночный шаг из двух мест, и на части баров он
+        # срабатывает дважды — заявка старела вдвое быстрее.
+        # «Десять баров» оказывались пятью: место 33 (13.02.2024)
+        # сняли на пятом баре, а цена дошла до заявки на шестом.
+        # Теперь прибавляем, только когда сменился бар.
+        if pos.get("_ждёт_бар_время") != bar_time:
+            zhdyot = pos.get("_ждёт_баров", 0) + 1
+            pos["_ждёт_баров"] = zhdyot
+            pos["_ждёт_бар_время"] = bar_time
+        else:
+            zhdyot = pos.get("_ждёт_баров", 0)
         dirty = True
 
         if zhdyot >= ORDER_EXPIRE_BARS:
@@ -1095,6 +1224,81 @@ def _otlozhka_entry_stop(order: dict, chain: dict):
     return entry, stop
 
 
+# ════════════════════════════════════════════════════════════
+# VNUTRI_BARA_V1 — вход и стоп в одном баре: заглянуть внутрь.
+# ════════════════════════════════════════════════════════════
+# Слово Шефа 24.09 («уже хочу»). Заявка сработала и стоп задет в ОДНОЙ
+# свече рабочего этажа — по самой свече не видно, что было раньше.
+# Город брал худший вариант. Теперь смотрит младший этаж из
+# test_data (M15, если нет — H1): где сработала заявка и был ли стоп
+# задет ПОСЛЕ этого до конца свечи. Младшая свеча, где задеты и вход,
+# и стоп сразу, — по-прежнему худший вариант. Данных нет — как раньше.
+_VNUTRI_KESH: dict = {}
+
+
+def _vnutri_bara(symbol, timeframe, bar_time, direction, entry, stop):
+    """→ ("стоп", когда) | ("живёт", когда_вход) | (None, почему)."""
+    try:
+        from datetime import datetime as _dtv, timedelta as _tdv
+        from bisect import bisect_left as _bl
+        from feed_source import _find_csv as _fcsv
+        from williams_core import read_mt5_csv as _rcsv
+    except Exception as e:
+        return None, f"нечем смотреть ({e})"
+    minut = {"H1": 60, "H2": 120, "H4": 240, "H6": 360, "H8": 480,
+             "H12": 720, "D1": 1440}.get(str(timeframe or "").upper())
+    if not minut or entry is None or stop is None:
+        return None, "этаж не тот"
+    try:
+        t0 = _dtv.strptime(str(bar_time)[:16], "%Y.%m.%d %H:%M")
+    except Exception:
+        return None, "время бара не читается"
+    t1 = t0 + _tdv(minutes=minut)
+    s0, s1 = t0.strftime("%Y.%m.%d %H:%M"), t1.strftime("%Y.%m.%d %H:%M")
+    long_ = str(direction).upper() == "LONG"
+    for mlad, m_min in (("M15", 15), ("H1", 60)):
+        if m_min >= minut:
+            continue
+        try:
+            put = _fcsv(symbol, mlad)
+        except Exception:
+            put = None
+        if not put:
+            continue
+        kl = str(put)
+        if kl not in _VNUTRI_KESH:
+            try:
+                _b = _rcsv(kl)
+                _VNUTRI_KESH[kl] = (_b, [str(x.get("date")) for x in _b])
+            except Exception:
+                continue
+        bars, daty = _VNUTRI_KESH[kl]
+        i = _bl(daty, s0)
+        vn = []
+        while i < len(bars) and daty[i] < s1:
+            vn.append(bars[i])
+            i += 1
+        if not vn:
+            continue
+        aktiv = None
+        for b in vn:
+            vh = (b["high"] >= entry) if long_ else (b["low"] <= entry)
+            st = (b["low"] <= stop) if long_ else (b["high"] >= stop)
+            if aktiv is None:
+                if not vh:
+                    continue
+                aktiv = b["date"]
+                if st:
+                    return "стоп", f"{mlad} {b['date']} (вход и стоп в одной {mlad})"
+                continue
+            if st:
+                return "стоп", f"{mlad} {b['date']}"
+        if aktiv is None:
+            return None, f"{mlad}: вход внутри свечи не найден"
+        return "живёт", f"{mlad}: вход {aktiv}, стоп до конца свечи не задет"
+    return None, "младшего этажа за это время нет"
+
+
 def _settle_positions(state: dict):
     """
     ЗАКРЫТИЕ позиций — физика, считает КОД (не LLM).
@@ -1133,6 +1337,20 @@ def _settle_positions(state: dict):
 
     still_open, closed = [], []
     for pos in positions:
+        # RABOTA_PO_PARE_V1: ЧЕЙ БАР ПРИШЁЛ. Трое трейдеров — три
+        # разных инструмента, а стол цеха один. Позиция по золоту не
+        # имеет никакого отношения к барам евро: её нельзя ни закрыть
+        # по чужому стопу, ни записать в журнал чужим символом.
+        _psym = (pos.get("symbol") or "").strip().upper()
+        if _psym and symbol and _psym != str(symbol).strip().upper():
+            still_open.append(pos)
+            continue
+        if not _psym:
+            print(f"[SETTLE] ⚠️  позиция {pos.get('trader')} без инструмента "
+                  f"(открыта до 14.08) — не сужу её чужим баром {symbol}. "
+                  f"Решение по старым позициям за Шефом.")
+            still_open.append(pos)
+            continue
         # VASILY_ZASADA_V1: засада/заявка — не открытая позиция, закрывать
         # нечего (у WATCHING координаты входа заданы, но входа ещё НЕ БЫЛО).
         if pos.get("status") in ("WATCHING", "PENDING"):
@@ -1154,8 +1372,41 @@ def _settle_positions(state: dict):
             exit_price, reason = stop, "STOP_LOSS"
         elif reason is None and direction == "SHORT" and high is not None and high >= stop:
             exit_price, reason = stop, "STOP_LOSS"
-        elif reason is None and bell and close is not None:
-            exit_price, reason = close, "EXIT_BELL"
+        # VNUTRI_BARA_V1: заявка сработала на ЭТОЙ же свече, и стоп
+        # тоже задет — смотрим внутрь по младшему этажу.
+        if (reason == "STOP_LOSS"
+                and str(pos.get("opened_at") or "") == str(bar_time)):
+            _vv, _kak = _vnutri_bara(symbol, timeframe, bar_time,
+                                     direction, entry, stop)
+            if _vv == "живёт":
+                exit_price, reason = None, None
+                print(f"[ВНУТРИ БАРА] 🔍 {pos.get('trader')} {direction}: "
+                      f"{_kak} — позиция живёт")
+            elif _vv == "стоп":
+                print(f"[ВНУТРИ БАРА] 🔍 {pos.get('trader')} {direction}: "
+                      f"вошла, стоп задет {_kak} — выбило честно")
+            else:
+                print(f"[ВНУТРИ БАРА] 🔍 {pos.get('trader')} {direction}: "
+                      f"{_kak} — беру худший вариант")
+        # KOLOKOL_I_PERESTANOVKA_V1: колокол — по стороне сделки.
+        # Медвежье расхождение (exit_bell) кончает ход ВВЕРХ — это
+        # выход для LONG. Для SHORT выход — бычье (divergence_ao).
+        # Раньше колокол закрывал и SHORT по медвежьему — то есть
+        # по сигналу в ЕГО пользу.
+        # KOLOKOL_BUDIT_V1 (слово Шефа 24.09): колокол больше НЕ
+        # закрывает сам. Он звенит на двух соседних бугорках и почти
+        # всегда; когда Синди выходила сама — выходила лучше кода.
+        # Теперь колокол только БУДИТ трейдера — на баре, где начал
+        # звонить. Пока звонит подряд — повторно не будит.
+        if reason is None and close is not None:
+            _zvon = ((direction == "LONG" and bell)
+                     or (direction == "SHORT"
+                         and bool(md.get("divergence_ao"))))
+            if _zvon and not pos.get("_колокол_звенел"):
+                pos["колокол"] = bar_time
+                print(f"[КОЛОКОЛ] 🔔 {pos.get('trader')} {direction}: "
+                      f"звонит — будим трейдера, решает она")
+            pos["_колокол_звенел"] = bool(_zvon)
 
         if exit_price is None:
             still_open.append(pos)
@@ -1225,6 +1476,42 @@ def _settle_positions(state: dict):
         }
         closed.append(record)
 
+        # TRI_POPYTKI_V1: выбило стоп — попытка засчитана. Слово Шефа:
+        # «не попала, ждёт следующий разворотник, так три раза; после
+        # третьего думает, то ли она делает». Счётчик живёт при точке:
+        # новая точка — новый счёт с нуля. Город не запрещает четвёртый
+        # вход, он только говорит вслух то, что трейдер и сам заметил.
+        if reason == "STOP_LOSS":
+            try:
+                _t = load_trading_state()
+                _isk = _blok_tochki(
+                    _t, _para_tochki(pos.get("symbol") or symbol,
+                                     md.get("timeframe") or ""))
+                _isk["попыток"] = int(_isk.get("попыток") or 0) + 1
+                # SVOI_SDELKI_VIDNO_V1: рядом со счётчиком — сами
+                # исходы. Счётчик говорит «которая по счёту», а это —
+                # «чем кончились прошлые». Не запрет: три попытки его
+                # право, и четвёртая тоже не заказана. Просто человек
+                # приходит на структуру и ВИДИТ, что уже пробовал, —
+                # без того, чтобы догадаться спросить память.
+                # Живёт при точке и гаснет вместе с ней: новая
+                # структура — чистый лист, чужих граблей не наследуем.
+                _ish = list(_isk.get("исходы") or [])
+                _ish.append({
+                    "попытка": _isk["попыток"],
+                    "чем": "стоп",
+                    "цена": pos.get("stop"),
+                    "вход": pos.get("entry"),
+                    "куда": pos.get("direction"),
+                    "бар": md.get("bar_time"),
+                })
+                _isk["исходы"] = _ish[-3:]     # больше трёх незачем
+                save_trading_state(_t)
+                print(f"[ПОПЫТКА] ✗ стоп выбил · попытка "
+                      f"{_isk['попыток']} на этой структуре")
+            except Exception as _ep:
+                print(f"[ПОПЫТКА] не сосчиталась ({_ep}) — работаем дальше")
+
         PNL_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(PNL_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -1272,10 +1559,40 @@ def _settle_positions(state: dict):
               f"{pos.get('trader')} закрыт ({reason}): "
               f"pnl={pnl_price} ({pnl_r}R)")
 
+    # KOLOKOL_PAMYAT_V1: метку колокола — в стол, даже если на баре
+    # ничего не закрылось. Иначе она пропадала: Синди не будили,
+    # а «звенел ли в прошлый бар» терялось и звон шёл каждый бар.
+    if not closed and any("_колокол_звенел" in _q for _q in still_open):
+        try:
+            _tk = load_trading_state()
+            for _p in _tk.get("positions") or []:
+                for _q in still_open:
+                    if ((_p.get("magic"), _p.get("entry"),
+                         _p.get("opened_at"))
+                            == (_q.get("magic"), _q.get("entry"),
+                                _q.get("opened_at"))):
+                        for _kk in ("колокол", "_колокол_звенел"):
+                            if _kk in _q:
+                                _p[_kk] = _q[_kk]
+            save_trading_state(_tk)
+        except Exception as _e_kp:
+            print(f"[КОЛОКОЛ] метку сохранить не вышло ({_e_kp})")
     if closed:
         chain["open_positions"] = still_open
         tstate = load_trading_state()
         tstate["positions"] = still_open
+        # POZICIYA_NE_KAZHDYY_BAR_V1: последнее закрытие — в стол, чтобы
+        # ключ мог позвать трейдера ровно на том баре, где сделка
+        # кончилась. Раньше закрытия жили только в журнале, и город
+        # молчал о самом важном.
+        _p = closed[-1]
+        tstate["последнее_закрытие"] = {
+            "бар": _p.get("closed_at"),
+            "symbol": _p.get("symbol"),
+            "причина": _p.get("close_reason"),
+            "выход": _p.get("exit"),
+            "pnl": _p.get("pnl_price"),
+        }
         save_trading_state(tstate)
         print(f"[SETTLE] 📒 Закрыто: {len(closed)}, осталось: {len(still_open)}")
 
@@ -1674,7 +1991,19 @@ def _judge_iskra_by_result(pos: dict, pnl_r):
             pass
 
         from nositel import _zval, dyhnut_slovom   # MAYAK_SENSOROV_V1
+        # SUDYA_BEZ_PRIZRAKOV_V1: сперва спрашиваем, есть ли место.
+        # Сенсоров убрали 06.08 вместе с Искрой — папок A01…A04 в цехе
+        # нет, постов тоже. А таблица их всё перечисляла, и после
+        # КАЖДОЙ сделки два готовых вывода уходили в пустоту:
+        # «дописано: False, слот пуст». Таблицу не трогаем: заведёшь
+        # сенсоры снова — заработает само.
+        _est = _slot_sushchestvuet("торговый_хаос")
+        _prizraki = [s for s in SENSOR_SLOTS.values() if not _est(s)]
+        if _prizraki:
+            print(f"[МАЯК] мест нет, пропускаю: {', '.join(_prizraki)}")
         for key, slot in SENSOR_SLOTS.items():
+            if not _est(slot):
+                continue
             pokazanie = stol.get(key) or {}
             zval = _zval(key, pokazanie, direction)
             vyvod = sudit_sensora(key, pokazanie, direction, pnl_r, trader, bar)
@@ -1768,8 +2097,7 @@ def _print_market_summary(md: dict):
     ao = md["ao"]
     print(f"  AO:       {ao['value']} (prev={ao['prev_value']}) "
           f"dir={ao['direction']} zero={ao['crossed_zero']}")
-    ac = md["ac"]
-    print(f"  AC:       {ac['value']} dir={ac['direction']}")
+    # AC_VON_V1: AC убран из города — печатать нечего
     print(f"  MFI:      {md['mfi']['type']} vol={md['mfi']['volume']}")
     print(f"  Фракталы: ▲{md['fractals']['count_up']} ▼{md['fractals']['count_down']}")
     if md["divergence_ao"]: print("  ⚡ ДИВЕРГЕНЦИЯ AO (бычья) — Точка Ноль!")
@@ -2148,3 +2476,763 @@ def run_live_council(bars: list, symbol: str, timeframe: str,
 # BIRZHA_CLEAN_MEMORY_V2 — маркер идемпотентности
 
 # VASILY_ZASADA_V1 — маркер идемпотентности
+
+# SVOY_STOL_CEHA_V1 - marker
+
+
+# ═══════════════════════════════════════════════════════════
+# РЫНОК СУДИТ ПЕРВЫМ (RUKA_RYNKA_V1)
+# ═══════════════════════════════════════════════════════════
+# Обе руки ниже были написаны давно и работали — но их перестал
+# звать кто бы то ни было, когда 06.08 ушёл старый путь Совета
+# вместе с Искрой. Заявка висела вечно, позиция не закрывалась
+# никогда, журнал сделок не рос, судья молчал.
+#
+# Это ФИЗИКА, а не суждение: рынок делает своё дело до того, как
+# кто-то за столом откроет рот. Поэтому рука зовётся первым шагом
+# wake_council — раньше Архивариуса и раньше трейдеров.
+# ═══════════════════════════════════════════════════════════
+# TOCHKA_ROZHDAETSYA_V1 — точку ноль зажигает КОД, а не Искра
+# ═══════════════════════════════════════════════════════════
+# proverit_tochku (TOCHKA_ZHIVA_V1) умела ВЕСТИ точку между барами,
+# но зажигала её только Искра (слоты/A01/мозг.py, ISKRA_ALIVE_V1).
+# Слот уехал в архив 06.08 — и alive=True не ставил больше никто.
+# Точка вечно мертва, разворотник на столе живёт одну свечу, мерить
+# от него откат нечем.
+#
+# Слово Шефа: «разворотник и есть точка; увидел разворотник и смотрю
+# от него же волну 1». Но бар истинен НЕ сам по себе: КАНОН_ВХОДА
+# §2.1 (модуль 6.2) — разворотник это пункт ЧЕТВЁРТЫЙ, печать в зоне
+# конца волны, а не поиск по всему графику. Зону меряет линейка по AO
+# (izmerit_volnovuyu_strukturu, 18.07): горб третьей → переход нуля →
+# дивергенция пятой. Её ответ — поле struktura_chitaetsya.
+# Рамку 100-140 не берём: окно — не фильтр (§5к-5п).
+#
+# Это ПОКАЗАНИЕ, а не решение: координата с датой, как фрактал или
+# зона. Что она значит — судит трейдер.
+
+def _para_tochki(symbol: str, timeframe: str) -> str:
+    """Имя ячейки на полке. У точки должно быть имя пары — иначе
+    сосед по цеху подменит её своей."""
+    s = (symbol or "").strip().upper()
+    tf = (timeframe or "").strip().upper()
+    return f"{s} {tf}".strip()
+
+
+def _blok_tochki(tstate: dict, para: str = "") -> dict:
+    """Ячейка точки. Пары нет — старый общий блок `iskra` (так зовут
+    те, кто был написан до полки). Пара есть — своя ячейка."""
+    if not para:
+        return tstate.setdefault("iskra", {})
+    return tstate.setdefault("точки", {}).setdefault(para, {})
+
+
+# ═══════════════════════════════════════════════════════════
+# NABLYUDENIE_V1 — «беру на карандаш», второй ключ пробуждения
+# ═══════════════════════════════════════════════════════════
+# Слово Шефа: «увидел, похоже, проверил — наблюдай, если видишь, что
+# вот-вот твой сигнал». Трейдер, которому родившаяся точка не его
+# момент, больше не теряет увиденное: он говорит НАБЛЮДАЮ, и город
+# будит его дальше, пока он сам не скажет УХОЖУ или не войдёт.
+#
+# Снимает наблюдение ТОЛЬКО трейдер. Код не гасит его ни при сломе
+# точки, ни по числу баров: слом он увидит сам и скажет.
+
+def nablyudenie(symbol: str = "", timeframe: str = "",
+                slot: str = "") -> dict:
+    """Что трейдер взял на карандаш по этой паре. Пусто — не наблюдает."""
+    try:
+        t = load_trading_state()
+        para = _para_tochki(symbol, timeframe)
+        return ((t.get("наблюдения") or {}).get(para) or {}).get(slot) or {}
+    except Exception:
+        return {}
+
+
+def vzyat_na_karandash(symbol: str, timeframe: str, slot: str,
+                       za_chem: str = "", bar: str = "") -> None:
+    """Трейдер сказал НАБЛЮДАЮ. Запоминаем — за чем и с какого бара."""
+    try:
+        t = load_trading_state()
+        para = _para_tochki(symbol, timeframe)
+        polka = t.setdefault("наблюдения", {}).setdefault(para, {})
+        bylo = polka.get(slot) or {}
+        polka[slot] = {
+            "за_чем": (za_chem or "").strip()[:400],
+            "с_бара": bylo.get("с_бара") or bar,
+            "последний_бар": bar,
+        }
+        save_trading_state(t)
+        if not bylo:
+            print(f"[НАБЛЮДЕНИЕ] 👁 {slot} взял на карандаш {para}")
+    except Exception as e:
+        print(f"[НАБЛЮДЕНИЕ] записать не вышло ({e}) — работаем дальше")
+
+
+def snyat_nablyudenie(symbol: str = "", timeframe: str = "",
+                      slot: str = "", pochemu: str = "") -> bool:
+    """Трейдер сказал УХОЖУ (или вошёл). Наблюдение снимается."""
+    try:
+        t = load_trading_state()
+        para = _para_tochki(symbol, timeframe)
+        polka = (t.get("наблюдения") or {}).get(para) or {}
+        if slot not in polka:
+            return False
+        polka.pop(slot, None)
+        save_trading_state(t)
+        print(f"[НАБЛЮДЕНИЕ] ✕ {slot} снял наблюдение по {para}"
+              + (f": {pochemu}" if pochemu else ""))
+        return True
+    except Exception as e:
+        print(f"[НАБЛЮДЕНИЕ] снять не вышло ({e}) — работаем дальше")
+        return False
+
+
+def zabyt_tochku(symbol: str = "", timeframe: str = "") -> bool:
+    """TOCHKA_NE_TASHCHITSYA_V1: стереть точку по паре.
+
+    Нужна прогону по истории: он ПРЫГАЕТ от места к месту через недели
+    и месяцы, а точка живёт между вызовами (в реале так и надо — город
+    идёт баром за баром). Без чистки на новое место приезжает точка,
+    рождённая полгода назад: заново не родится, а проверка тут же
+    похоронит её структурным сломом — и трейдера не позовут там, где
+    стоит честный разворотник.
+
+    Ничего не судит и никого не будит. Просто чистая доска.
+    """
+    try:
+        t = load_trading_state()
+        para = _para_tochki(symbol, timeframe)
+        polka = t.get("точки") or {}
+        bylo = bool((polka.get(para) or {}).get("alive"))
+        if para in polka:
+            polka.pop(para, None)
+            t["точки"] = polka
+        # NABLYUDENIE_V1: прогон прыгнул — вчерашнее наблюдение к новому
+        # месту отношения не имеет. В живом городе эта рука не зовётся.
+        (t.get("наблюдения") or {}).pop(para, None)
+        save_trading_state(t)
+        return bylo
+    except Exception as e:
+        print(f"[ТОЧКА] забыть не вышло ({e}) — работаем дальше")
+        return False
+
+
+# ═══════════════════════════════════════════════════════════
+# VEDENIE_FRAKTALY_V1 — стоп на два фрактала назад
+# ═══════════════════════════════════════════════════════════
+# «РЫНОЧНЫЙ ФРАКТАЛ», §4.2: «Стоп-лосс перемещается на уровень,
+# расположенный на два фрактала назад в противоположном направлении.
+# Это позволяет плыть по течению и защищает прибыль при развороте.»
+#
+# Ни порогов, ни процентов. Только фракталы, которые и так считаются.
+# Стоп ходит ТОЛЬКО в сторону прибыли — назад никогда.
+
+def _vesti_stopy(md: dict) -> int:
+    """Подтянуть стопы открытых позиций. Возвращает, сколько сдвинуто.
+
+    Это не решение о сделке, а исполнение правила, которое трейдер
+    принял, когда входил. Потому и делается кодом, без вопросов.
+    """
+    try:
+        fr = (md or {}).get("fractals") or {}
+        verh = list(fr.get("all_up") or [])
+        niz = list(fr.get("all_down") or [])
+        _bar_sym = str((md or {}).get("symbol", "") or "").strip().upper()
+
+        t = load_trading_state()
+        sdvinuto = 0
+        for pos in (t.get("positions") or []):
+            if pos.get("status") not in ("OPEN", "WATCHING"):
+                continue
+            _psym = (pos.get("symbol") or "").strip().upper()
+            if _psym and _bar_sym and _psym != _bar_sym:
+                continue          # чужой рынок — не наше дело
+            napr = (pos.get("direction") or "").upper()
+            stop = pos.get("stop")
+            if stop is None:
+                continue
+            # два фрактала назад в ПРОТИВОПОЛОЖНОМ направлении
+            if napr == "LONG":
+                if len(niz) < 2:
+                    continue
+                novyy = niz[-2].get("price")
+                dvigat = novyy is not None and novyy > stop
+            elif napr == "SHORT":
+                if len(verh) < 2:
+                    continue
+                novyy = verh[-2].get("price")
+                dvigat = novyy is not None and novyy < stop
+            else:
+                continue
+            if not dvigat:
+                continue          # назад стоп не ходит
+            pos["stop"] = novyy
+            pos["stop_vedyot"] = "два фрактала назад"
+            sdvinuto += 1
+            print(f"[ВЕДЕНИЕ] ⇢ {napr} {pos.get('entry')} · "
+                  f"стоп {stop} → {novyy} (2 фрактала назад)")
+        if sdvinuto:
+            save_trading_state(t)
+        return sdvinuto
+    except Exception as e:
+        print(f"[ВЕДЕНИЕ] стопы не подтянулись ({e}) — позиции целы")
+        return 0
+
+
+def _vesti_tochku(md: dict, symbol: str = "", timeframe: str = "") -> dict:
+    """Родить точку ноль или вести уже рождённую. Код, без LLM.
+
+    Зовётся на каждом баре из rynok_novyy_bar. Никогда не падает:
+    в худшем случае отдаёт {"alive": False}.
+    """
+    para = _para_tochki(symbol, timeframe)
+    try:
+        wf = md.get("wave_form") or {}
+        napr = wf.get("bdb_dir")
+        cena = wf.get("bdb_price")
+        price = md.get("price") or {}
+        bar = md.get("bar_time")
+
+        t = load_trading_state()
+        isk = _blok_tochki(t, para)
+
+        # ODIN_BAR_ODNO_RESHENIE_V1: один бар — одно решение.
+        # Рука рынка на одном баре зовётся дважды: молчаливым шагом
+        # прогона и потом внутри Совета. В прогоне 20.08 из-за этого
+        # пропал первый в истории конец волны 1: первый заход его
+        # отметил, второй зашёл заново, увидел отметку, провалился в
+        # блок рождения — и точка родилась поверх события, стерев его.
+        # Оба решения по отдельности верны, но принимать их дважды об
+        # одном баре нельзя.
+        if bar and str(isk.get("reshali_na_bare") or "") == str(bar):
+            return dict(isk.get("otvet_bara") or {"alive": bool(isk.get("alive"))})
+
+        def _zapomnit_otvet(otvet: dict) -> dict:
+            """Запомнить решение этого бара и отдать его как есть."""
+            try:
+                t2 = load_trading_state()
+                isk2 = _blok_tochki(t2, para)
+                isk2["reshali_na_bare"] = str(bar or "")
+                isk2["otvet_bara"] = dict(otvet)
+                save_trading_state(t2)
+            except Exception:
+                pass
+            return otvet
+        zhiva = bool(isk.get("alive"))
+        storona = isk.get("trend_direction")
+
+        # VERSHINA_NE_NIZHE_KRAYA_V1: вершина не может быть НИЖЕ того,
+        # куда цена потом дошла.
+        #
+        # Конец волны 1 ставит разворотный бар — так в каноне, это не
+        # трогаем. Но проверялась эта отметка только ДРУГИМ разворотным
+        # баром (NOVAYA_MAKUSHKA_V1). Если цена идёт дальше и обратных
+        # разворотников не даёт, вершина остаётся внизу, хотя рынок её
+        # давно прошёл. Глазом это видно сразу, у кода проверки не было.
+        #
+        # Край после точки код и так копит каждый бар — самый дальний
+        # экстремум с рождения точки, «та самая макушка волны 1». Здесь
+        # просто сверяем два числа, которые уже лежат рядом. Ни порогов,
+        # ни допусков, ни новых данных.
+        #
+        # Переезд ≠ «волна кончилась заново» (KRAY_VOLNY_V1): волна как
+        # раз продолжается. Событий трейдеру не добавляем, не будим.
+        if (zhiva and isk.get("konec_volny_1")
+                and not isk.get("konec_volny_2")):
+            _kv = isk.get("konec_volny_1") or {}
+            _vershina = _kv.get("цена")
+            _kray = isk.get("kray_posle")
+            if _vershina is not None and _kray is not None:
+                try:
+                    _dalshe = (_kray > _vershina if storona == "BULL"
+                               else _kray < _vershina)
+                except TypeError:
+                    _dalshe = False
+                if _dalshe:
+                    _kv["цена"] = _kray
+                    _kv["бар"] = bar
+                    _kv["баров_от_точки"] = int(isk.get("barov_s_tochki") or 0)
+                    _kv["сдвинулась_ценой"] = True
+                    isk["konec_volny_1"] = _kv
+                    save_trading_state(t)
+                    _slovo = "вершина" if storona == "BULL" else "дно"
+                    print(f"[ВОЛНА 1] ↗ {para}: {_slovo} подтянулась "
+                          f"{_vershina} → {_kray} (цена ушла дальше)")
+
+        # ── разворотник на этом баре: рождение или ведение ──
+        # Рождаем ТОЛЬКО в зоне конца волны (модуль 6.2, пункты 1-2):
+        # бар без читаемой структуры — середина движения, не конец.
+        # KONEC_VOLNY_2_V1: разворотник В СТОРОНУ точки, пришедший
+        # ПОСЛЕ отмеченной макушки, — это конец отката, а не подпитка.
+        # КАНОН §4.1: волна 2 сама маленький зигзаг, и её конец ловится
+        # той же механикой РБ, только этажом мельче и без требования
+        # яркой ангуляции. Различает подпитку и откат одно: была
+        # макушка или нет. Ни порогов, ни новых чисел.
+        # До макушки всё по-старому — такой бар углубляет точку
+        # (TOCHKA_ZHIVA_V1), и это верно: волна ещё не пошла.
+        if (zhiva and napr in ("BULL", "BEAR") and storona == napr
+                and cena is not None and isk.get("konec_volny_1")
+                and not isk.get("konec_volny_2")):
+            _kv1 = isk.get("konec_volny_1") or {}
+            _ot_makushki = (int(isk.get("barov_s_tochki") or 0)
+                            - int(_kv1.get("баров_от_точки") or 0))
+            isk["konec_volny_2"] = {
+                "цена": cena, "бар": bar,
+                "баров_от_макушки": max(0, _ot_makushki),
+            }
+            save_trading_state(t)
+            _slovo = "вершины" if storona == "BULL" else "дна"
+            _n = int(isk.get("нога") or 1)   # NOGI_SCHYOTNYE_V1
+            isk["konec_volny_2"]["нога"] = _n
+            save_trading_state(t)
+            print(f"[ОТКАТ] ↩ {para}: кончился @ {cena} · бар {bar} "
+                  f"· {max(0, _ot_makushki)} бар(ов) от {_slovo} "
+                  f"· нога {_n}")
+            return _zapomnit_otvet({"alive": True, "konec_volny_2": True,
+                                    "direction": storona})
+
+        # KONEC_VOLNY_1_V1: разворотник в ОБРАТНУЮ сторону внутри живой
+        # точки — это не новое начало, а конец первой волны от неё,
+        # если структура позади укладывается ПОСЛЕ точки. По
+        # фрактальности волна 1 — сама пятиволновка, и конец её пятой
+        # ловится тем же прибором, что и сама точка.
+        # Сравниваем два числа, которые уже считаются: сколько баров
+        # живёт точка и сколько баров у структуры. Ни допусков, ни
+        # рамок по длине: волна задаёт этажи, а не этажи волну.
+        # NOVAYA_MAKUSHKA_V1: макушка уже стоит, а пришёл ещё один
+        # разворотник против точки. Слово Шефа: «значит новая макушка».
+        # Волна 1 просто тянется дальше — точку рвать нельзя, иначе
+        # откат ждать не от чего (так терялась половина: до отката
+        # доживало 47% волн).
+        # Переезжает макушка только если экстремум ушёл ДАЛЬШЕ прежнего:
+        # чистое сравнение двух цен, без порогов. Не ушёл — молчим, это
+        # уже ход отката, а не новая вершина.
+        if (zhiva and napr in ("BULL", "BEAR") and storona != napr
+                and cena is not None and wf.get("struktura_chitaetsya")
+                and isk.get("konec_volny_1")
+                and not isk.get("konec_volny_2")):
+            _bylo = (isk.get("konec_volny_1") or {}).get("цена")
+            _dalshe = (_bylo is None
+                       or (cena > _bylo if storona == "BULL" else cena < _bylo))
+            if _dalshe:
+                isk["konec_volny_1"] = {
+                    "цена": cena, "бар": bar, "сторона": napr,
+                    "структура": wf.get("dlina") or 0,
+                    "баров_от_точки": int(isk.get("barov_s_tochki") or 0),
+                    "сдвинулась": True,   # KRAY_VOLNY_V1: не первый раз
+                }
+                isk["kray_posle"] = cena
+                save_trading_state(t)
+                # KRAY_VOLNY_V1: край, а не «макушка» — на медвежьей
+                # структуре это дно. И переезд ≠ конец: волна как раз
+                # продолжается, трейдер на «кончилась» честно спорил.
+                _slovo = "вершина" if storona == "BULL" else "дно"
+                _okonchanie = "ась" if storona == "BULL" else "ось"
+                print(f"[ВОЛНА 1] ⛰ {para}: {_slovo} сдвинул{_okonchanie} "
+                      f"{_bylo} → {cena} · бар {bar}")
+                return _zapomnit_otvet({"alive": True, "konec_volny_1": True,
+                                        "kray_sdvinulsya": True,
+                                        "direction": storona})
+            # не дальше прежней — это ход отката, ничего не трогаем
+            return _zapomnit_otvet(proverit_tochku(md, para))
+
+        # NOGI_SCHYOTNYE_V1: макушка и откат уже отмечены, а пришёл
+        # ещё один разворотник против точки. От точки до точки идёт
+        # пятиволновка (слово Шефа 26.08): после отката начинается
+        # следующая нога, у неё своя макушка и свой откат — той же
+        # механикой, тем же баром. Раньше это событие пропадало:
+        # оба гнезда заняты, и точка молчала до слома, хотя внутри
+        # неё проходили ещё две волны со своими шансами на вход.
+        #
+        # Номер ноги — ФАКТ, а не разметка. Третья это волна или
+        # пятая, решает трейдер: он смотрит.
+        if (zhiva and napr in ("BULL", "BEAR") and storona != napr
+                and cena is not None and isk.get("konec_volny_1")
+                and isk.get("konec_volny_2")):
+            _n = int(isk.get("нога") or 1) + 1
+            isk["нога"] = _n
+            isk["konec_volny_1"] = {
+                "цена": cena, "бар": bar, "сторона": napr,
+                "структура": wf.get("dlina") or 0,
+                "баров_от_точки": int(isk.get("barov_s_tochki") or 0),
+                "нога": _n,
+            }
+            isk["konec_volny_2"] = None
+            isk["kray_posle"] = cena
+            # три попытки — право на ОДНОМ сигнале; следующий откат
+            # будет новым сигналом, счёт начинается заново
+            isk["попыток"] = 0
+            save_trading_state(t)
+            _slovo = "вершина" if storona == "BULL" else "дно"
+            print(f"[ВОЛНА {_n}] ⛰ {para}: нога {_n} кончилась @ {cena} "
+                  f"· бар {bar} · {_slovo} новой ноги от той же точки")
+            return _zapomnit_otvet({"alive": True, "konec_volny_1": True,
+                                    "нога": _n, "direction": storona})
+
+        if (zhiva and napr in ("BULL", "BEAR") and storona != napr
+                and cena is not None
+                and not isk.get("konec_volny_1")):
+            # VOLNA_V_MASSHTABE_V1: условия «пятёрка читается» здесь
+            # БОЛЬШЕ НЕТ. Оно судило не нашу волну: линейка отматывает
+            # четыре нуля AO назад от текущего бара, и замер 22.08
+            # показал, что её длина одинакова на всех этажах (71-102
+            # бара везде) — то есть она меряет своё окно, а не волну от
+            # точки. Двадцать восемь срабатываний из шестидесяти девяти
+            # были совпадением, а не суждением.
+            #
+            # Теперь волна меряется В СВОЁМ МАСШТАБЕ (глава 7: волна
+            # должна занять 100-140 баров, иначе прибор смотрит чужой
+            # уровень), а вместо приговора «годится / не годится» на
+            # стол ложатся ЧИСЛА: сколько баров, на каком этаже,
+            # читается ли пятёрка, сколько пуль сошлось. Что это
+            # значит — решает трейдер.
+            _dlina = wf.get("dlina") or 0
+            _prozhito = int(isk.get("barov_s_tochki") or 0)
+            _izm, _puli = {}, {}
+            try:
+                import pyat_pul as _pp
+                _izm = _pp.merit_volnu(
+                    symbol, timeframe,
+                    str(isk.get("rodilas_na_bare") or ""), str(bar or ""),
+                    storona)
+                _puli = _pp.pyat_pul(md, storona)
+            except Exception as _epp:
+                print(f"[ВОЛНА 1] масштаб не померен ({_epp}) — "
+                      f"отмечаю без него")
+            if True:
+                isk["konec_volny_1"] = {
+                    "цена": cena, "бар": bar, "сторона": napr,
+                    "структура": _dlina,
+                    "баров_от_точки": _prozhito,
+                    # VOLNA_V_MASSHTABE_V1: волна в своём масштабе
+                    "этаж_волны": _izm.get("этаж"),
+                    "баров_на_этаже": _izm.get("баров"),
+                    "в_окне_100_140": _izm.get("в_окне"),
+                    "пятёрка": _izm.get("читается"),
+                    "пятёрка_почему": _izm.get("почему"),
+                    "пуль_сошлось": _puli.get("сошлось"),
+                    "пуль_посчитано": _puli.get("посчитано"),
+                    "пули": _puli.get("пули"),
+                }
+                save_trading_state(t)
+                _hvost = ""
+                if _izm:
+                    _hvost = (f" · волна {_izm.get('баров')} бар. на "
+                              f"{_izm.get('этаж')}"
+                              f", пятёрка: "
+                              f"{'да' if _izm.get('читается') else 'нет'}")
+                if _puli:
+                    _hvost += (f", пуль {_puli.get('сошлось')}"
+                               f"/{_puli.get('посчитано')}")
+                print(f"[ВОЛНА 1] ⛰ {para}: кончилась @ {cena} · бар {bar} "
+                      f"· {_prozhito} бар(ов) от точки{_hvost}")
+                return _zapomnit_otvet({"alive": True, "konec_volny_1": True,
+                                        "direction": storona})
+
+        if napr in ("BULL", "BEAR") and cena is not None                 and wf.get("struktura_chitaetsya"):
+            # ODNA_TOCHKA_ZA_RAZ_V1: пока жива старая — новая не родится.
+            # Было `(not zhiva) or storona != napr`: живая точка не
+            # мешала, и любой разворотник против неё объявлял себя новым
+            # началом, стирая её волну 1, откат и счётчик попыток.
+            # Отсюда 33 точки в год вместо 3-5 и 74 пустые структуры из
+            # 87 — точка не доживала до собственной волны.
+            #
+            # Слово Шефа (25.08): точка ноль — конец коррекции СТАРШЕГО
+            # порядка, ОДНА на движение, не переезжает. Всё, что внутри,
+            # это её волны и откаты, они доживают до слома.
+            #
+            # Исходов у точки по-прежнему ДВА, третьего не заводим:
+            # структурный слом по Close (proverit_tochku) или её волна.
+            # Замер: точек 33 → 5.8 в год, ног 8 → 18, жизнь 4 → 6 баров.
+            if not zhiva:
+                # KONEC_VOLNY_1_V1: сюда обратный разворотник попадает
+                # только если конец волны 1 уже был отмечен или его
+                # структура НЕ уложилась после точки — тогда это правда
+                # новое начало, а не макушка первой волны.
+                isk["alive"] = True
+                isk["trend_direction"] = napr
+                isk["zero_point_price"] = cena
+                isk["rodilas_na_bare"] = bar
+                isk["t1_status"] = "DETECTED"
+                isk["neutral_bars_count"] = 0
+                isk["barov_s_tochki"] = 0
+                isk["kray_posle"] = cena
+                isk["struktura_pozadi"] = wf.get("dlina")
+                # KONEC_VOLNY_1_V2: новая точка — новая жизнь. Без этой
+                # строки отметка о конце волны 1 оставалась от ПРОШЛОЙ
+                # точки и навсегда запирала событие: за 1.8 года срабатывало
+                # ровно один раз, хотя обратных разворотников было девять.
+                isk["konec_volny_1"] = None
+                isk["konec_volny_2"] = None   # KONEC_VOLNY_2_V1
+                isk["попыток"] = 0            # TRI_POPYTKI_V1
+                isk["нога"] = 0               # NOGI_SCHYOTNYE_V1
+                save_trading_state(t)
+                print(f"[ТОЧКА] ✦ {para}: родилась {napr} @ {cena} · "
+                      f"бар {bar} · структура позади: "
+                      f"{wf.get('dlina')} бар.")
+                return _zapomnit_otvet({"alive": True, "rodilas": True,
+                                        "direction": napr})
+            elif storona != napr:
+                # ODNA_TOCHKA_ZA_RAZ_V1: разворотник против живой точки,
+                # который не стал ни концом волны 1, ни концом отката
+                # (оба блока стоят выше и возвращают сами). Раньше он
+                # рождал новую точку поверх живой. Теперь — строка в
+                # ленту и ведение прежней: волна ещё идёт.
+                print(f"[ТОЧКА] · {para}: жива {storona} @ "
+                      f"{isk.get('zero_point_price')} — разворотник "
+                      f"{napr} @ {cena} новой не делает (бар {bar})")
+            # та же сторона и точка жива — ведёт proverit_tochku:
+            # там подпитка GREEN/SQUAT и структурный слом.
+
+        res = proverit_tochku(md, para)
+
+        # ── пока жива, копим два СЫРЫХ числа: край после точки
+        # (та самая макушка волны 1) и сколько баров прошло ──
+        if res.get("alive"):
+            t = load_trading_state()
+            isk = _blok_tochki(t, para)
+            isk["barov_s_tochki"] = int(isk.get("barov_s_tochki", 0) or 0) + 1
+            kray = isk.get("kray_posle")
+            zp = isk.get("zero_point_price")
+            napr2 = isk.get("trend_direction")
+            hi, lo = price.get("high"), price.get("low")
+            if napr2 == "BULL" and hi is not None:
+                isk["kray_posle"] = hi if kray is None else max(kray, hi)
+            elif napr2 == "BEAR" and lo is not None:
+                isk["kray_posle"] = lo if kray is None else min(kray, lo)
+            if isk.get("kray_posle") is None and zp is not None:
+                isk["kray_posle"] = zp
+            save_trading_state(t)
+        elif res.get("changed"):
+            print(f"[ТОЧКА] ✕ {para}: погасла — {res.get('reason')}")
+        return _zapomnit_otvet(res)
+    except Exception as e:
+        print(f"[ТОЧКА] ⚠️  не рассужена ({e}) — бар цел, работаем дальше")
+        return {"alive": False, "reason": f"сбой: {e}", "changed": False}
+
+
+# ═══════════════════════════════════════════════════════════
+# TOLKO_ZAKRYTYE_V1 — решаем по ЗАКРЫТЫМ барам, не по идущей свече
+# ═══════════════════════════════════════════════════════════
+# MetaTrader отдаёт с нулевой позиции формирующуюся свечу. Пока она
+# живёт (у H4 — четыре часа), её закрытие ходит туда-сюда, а вместе с
+# ним появляется и пропадает разворотный бар. Шеф поймал это глазом
+# 20.08: три запуска подряд по одному бару дали C=1.16739, 1.16754,
+# 1.1675 — и «РАЗВОРОТНЫЙ БАР: BEAR», которого к закрытию могло не
+# остаться.
+#
+# В прогоне по истории это запрещено с самого начала: курсор отдаёт
+# только закрытые бары, иначе город видел бы будущее. Здесь тот же
+# закон для реала.
+
+def _tolko_zakrytye(bars: list) -> list:
+    """В РЕАЛЕ отбросить последний, ещё идущий бар. В ТЕСТЕРЕ не
+    трогать: там за честность отвечает курсор истории."""
+    try:
+        from feed_source import get_feed_mode
+        if (get_feed_mode() or {}).get("mode") != "real":
+            return bars
+    except Exception:
+        return bars
+    if bars and len(bars) > 1:
+        return bars[:-1]
+    return bars
+
+
+def rynok_novyy_bar(symbol: str, timeframe: str,
+                    window=None, point=None) -> dict:
+    """Рассудить новый бар: что взято, что закрыто.
+
+    Бары берутся ОБЩИМ краном (feed_source) — тем же, из которого
+    рисуется кадр и смотрит трейдер. Второго источника не заводим:
+    режим РЕАЛ/ТЕСТЕР переключается в одном месте и действует на всех.
+
+    Порядок внутри бара — сперва активация заявок, потом закрытие.
+    Консервативно: заявка, взятая на этом баре, может на нём же
+    выбить стоп, и мы считаем именно так, а не как удобнее.
+
+    Возвращает {"активировано": N, "закрыто": M, "позиций": K} —
+    сводку для ленты кабинета. Ничего не решает и никого не судит.
+    """
+    itog = {"активировано": 0, "закрыто": 0, "позиций": 0, "причина": ""}
+
+    bars, _p = window, point
+    if not bars:
+        try:
+            from feed_source import bars as _src_bars
+            bars, _p = _src_bars(symbol, timeframe, 300)
+            bars = _tolko_zakrytye(bars)   # TOLKO_ZAKRYTYE_V1
+        except Exception as e:
+            itog["причина"] = f"кран молчит: {e}"
+            return itog
+    if point is not None:
+        _p = point
+    if window:
+        # TOLKO_ZAKRYTYE_V1: окно пришло снаружи (кабинет/прогон) — в
+        # реале в нём тоже сидит идущая свеча, режем и её.
+        bars = _tolko_zakrytye(bars)
+    if not bars:
+        itog["причина"] = "нет баров"
+        return itog
+
+    md = build_market_data(bars[-300:], symbol=symbol,
+                           timeframe=timeframe, point=_p)
+    if not md:
+        itog["причина"] = "williams_core вернул пусто"
+        return itog
+
+    # SVEZHEST_V1: отмечаем, на каком баре город стоит сейчас, —
+    # по этой отметке Исполнитель отличает свежий вердикт от вчерашнего.
+    try:
+        _t_bar = load_trading_state()
+        _t_bar.setdefault("рынок", {})["бар"] = str(md.get("bar_time") or "")
+        save_trading_state(_t_bar)
+    except Exception as _eb:
+        print(f"[РЫНОК] отметку бара не поставил: {_eb}")
+
+    state = {"chain_data": {"market_data": md}}
+    cd = state["chain_data"]
+    # Подушка безопасности Вильямса — экстремум второго бара назад.
+    if len(bars) >= 3:
+        cd["_bar_back2_low"] = bars[-3].get("low")
+        cd["_bar_back2_high"] = bars[-3].get("high")
+
+    # 1. заявки: рынок взял — становится позицией
+    bylo = len(load_trading_state().get("positions", []) or [])
+    _otkrytyh_do = sum(1 for p in (load_trading_state().get("positions") or [])
+                       if p.get("status") not in ("WATCHING", "PENDING"))
+    try:
+        _aktivirovat_ordera(state)
+    except Exception as e:
+        print(f"[РЫНОК] ⚠️  заявки не рассудились: {e}")
+
+    # 2. закрытие: стоп / колокол / воля трейдера
+    t = load_trading_state()
+    cd["open_positions"] = t.get("positions", []) or []
+    _otkrytyh_posle_akt = sum(1 for p in cd["open_positions"]
+                              if p.get("status") not in ("WATCHING", "PENDING"))
+    # ВАЖНО: _settle_positions переписывает cd["open_positions"] тем же
+    # словарём (chain — это и есть cd). Считать по нему ПОСЛЕ вызова
+    # нельзя — он уже новый. Запоминаем число ДО.
+    _bylo_v_stole = len(cd["open_positions"])
+    # VKLYUCHIT_TREYLING_V1: тянем стоп за Зубами ДО проверки
+    # стопов — так обещано в докстринге самой функции: «чтобы
+    # сейф успел сработать раньше, чем рынок дотянется до
+    # старого стопа».
+    #
+    # Функция была написана и НИКЕМ НЕ ВЫЗЫВАЛАСЬ: ни одной
+    # строчки [ТРЕЙЛ] за все прогоны. А на замере по 64 входам
+    # она дала −6.1R против −15.3R у фракталов своего этажа и
+    # −46.4R у неподвижного стопа. Лучшее ведение лежало
+    # выключенным.
+    try:
+        _treyling_za_zubami(state)
+    except Exception as e:
+        print(f"[РЫНОК] ⚠️  стоп не подтянулся ({e}) — иду дальше")
+    try:
+        _settle_positions(state)
+    except Exception as e:
+        print(f"[РЫНОК] ⚠️  позиции не закрылись: {e}")
+
+    stalo = load_trading_state().get("positions", []) or []
+    itog["активировано"] = max(0, _otkrytyh_posle_akt - _otkrytyh_do)
+    itog["закрыто"] = max(0, _bylo_v_stole - len(stalo))
+    itog["позиций"] = len(stalo)
+
+    # VEDENIE_FRAKTALY_V1: подтянуть стопы по фракталам. После
+    # закрытия — чтобы бар судил позицию тем стопом, с которым она в
+    # этот бар вошла, а не подтянутым задним числом.
+    _vesti_stopy(md)
+
+    # TOCHKA_ROZHDAETSYA_V1: точка ноль — после физики, до трейдеров.
+    # Разворотник и есть точка; дальше её ведёт proverit_tochku.
+    _vesti_tochku(md, symbol, timeframe)
+
+    if itog["активировано"] or itog["закрыто"]:
+        print(f"[РЫНОК] 📊 бар {md.get('bar_time', '')} · "
+              f"взято {itog['активировано']}, закрыто {itog['закрыто']}, "
+              f"в работе {itog['позиций']} (было {bylo})")
+    return itog
+
+
+# RUKA_RYNKA_V1 - marker
+
+# RABOTA_PO_PARE_V1 - marker
+
+# UBRAT_CHETVERTOGO_V1 - marker
+
+# SVEZHEST_V1 - marker
+
+# TOCHKA_ROZHDAETSYA_V1 - marker
+
+# TOLKO_ZAKRYTYE_V1 - marker
+
+# TOCHKA_NE_TASHCHITSYA_V1 - marker
+
+# NABLYUDENIE_V1 - marker
+
+# KONEC_VOLNY_1_V1 - marker
+
+# KONEC_VOLNY_1_V2 - marker
+
+# TOCHKA_DO_SLOMA_V1 - marker
+
+# ODIN_BAR_ODNO_RESHENIE_V1 - marker
+
+# KONEC_VOLNY_2_V1 - marker
+
+# NOVAYA_MAKUSHKA_V1 - marker
+
+# KRAY_VOLNY_V1 - marker
+
+# TRI_POPYTKI_V1 - marker
+
+# VEDENIE_FRAKTALY_V1 - marker
+
+# POZICIYA_NE_KAZHDYY_BAR_V1 - marker
+
+# VOLNA_V_MASSHTABE_V1 - marker
+
+# ZAYAVKA_SLED_BAR_V1 - marker
+
+
+# ══════════════════════════════════════════════════════════════
+# SUDYA_BEZ_PRIZRAKOV_V1 — есть ли такое место в цехе
+# ══════════════════════════════════════════════════════════════
+
+def _slot_sushchestvuet(ceh: str):
+    """Вернёт проверялку: есть ли у цеха такой слот НА ДИСКЕ.
+
+    Спрашиваем папку, а не маски и не посты: маска переживает
+    упразднение места (так было и с магиком Локи), а пост у сенсоров
+    не заводили вовсе. Папка со слотом — то, что есть или чего нет.
+
+    Список считаем ОДИН раз на сделку и держим в замыкании: судья
+    ходит по четырём сенсорам, и лазить на диск четырежды незачем.
+    """
+    imena = set()
+    try:
+        from pathlib import Path as _P
+        _koren = _P(__file__).resolve().parent.parent / "GRONDHEIM_CITY"
+        _d = _koren / "Биржа" / "цеха" / ceh / "слоты"
+        if _d.is_dir():
+            imena = {p.name for p in _d.iterdir() if p.is_dir()}
+    except Exception as e:
+        print(f"[МАЯК] слоты цеха не прочлись ({e}) — сужу как раньше")
+        return lambda _s: True          # не знаем — не мешаем
+    if not imena:
+        return lambda _s: True
+    return lambda s: s in imena
+
+# SUDYA_BEZ_PRIZRAKOV_V1 - marker
+
+# SVOI_SDELKI_VIDNO_V1 - marker
+
+# ODNA_TOCHKA_ZA_RAZ_V1 - marker
+
+# NOGI_SCHYOTNYE_V1 - marker
+
+# VERSHINA_NE_NIZHE_KRAYA_V1 - marker
+
+# AC_VON_V1 - marker

@@ -17,6 +17,54 @@ from nicegui import ui
 
 import rabota as R
 
+# BELYY_SHRIFT_V1: читаемость на тёмном — см.
+# postavit_belyy_shrift.py. Красим только то, что
+# рисует Quasar своей светлой темой внутри наших
+# тёмных карточек.
+_BELYY_SHRIFT = r"""
+/* BELYY_SHRIFT_V1 — читаемость на тёмном.
+   Карточки диалогов рисуем мы (тёмные), а подписи внутри — Quasar по
+   своей СВЕТЛОЙ теме. Отсюда тёмно-серые буквы на чёрном: в окне
+   перевозки так пропадали имена жителей у галочек.
+   Красим только то, что отдано Quasar'у. Кнопки и наши собственные
+   раскрашенные надписи не трогаем — у них цвет задан руками. */
+.q-dialog .q-card,
+.q-dialog .q-card .q-item__label,
+.q-dialog .q-card label,
+.q-checkbox__label,
+.q-radio__label,
+.q-toggle__label,
+.q-field__native,
+.q-field__input,
+.q-field__label,
+.q-field__prefix,
+.q-field__suffix,
+.q-item__label,
+.q-tab__label,
+.q-select__dropdown-icon,
+.q-menu .q-item,
+.q-menu .q-item__label {
+  color: rgba(255,255,255,0.92) !important;
+}
+
+/* Подсказка в пустом поле — белая, но приглушённая: она не должна
+   спорить с тем, что человек уже вписал. */
+.q-field__native::placeholder,
+.q-field__input::placeholder,
+.q-placeholder::placeholder {
+  color: rgba(255,255,255,0.45) !important;
+}
+
+/* Выпадающий список Quasar рисует НЕ внутри нашей карточки, а
+   отдельным слоем поверх страницы — своей темой. Без этого он
+   оставался светлым пятном с белым текстом на белом. */
+.q-menu {
+  background: #0d1117 !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+"""
+
+
 CSS = """
 <style>
 .rab-page { background:#0b0f14; color:#e6edf3;
@@ -75,7 +123,33 @@ def _zhiteli() -> list:
 
 # ZHITELI_V_RABOTE_V1: тип и фраза живут там же, где жили при «Роли» —
 # тип в паспорте, фраза в маске работы. Новых тетрадей не заводим.
-TIPY = ["резидент", "хранитель", "воркер", "студент"]
+# ROL_V_RABOTU_V1: четыре типа-поста приехали сюда со снесённой
+# вкладки «Роль» у Брата — библиотекарь, хранитель_архива, ректор,
+# хранитель_маяка. Без них эти четверо остались бы без типа: посадить
+# на пост можно во вкладке МЕСТА, а назвать — было негде.
+TIPY = ["резидент", "хранитель", "воркер", "студент",
+        "библиотекарь", "хранитель_архива", "ректор", "хранитель_маяка"]
+
+# Тип «студент» — не просто слово в паспорте: он занимает место в
+# Академии. Раньше это делала «Роль», теперь мы, но ТОЙ ЖЕ рукой —
+# не копией. Копия завела бы вторую правду о местах Академии, а
+# правда одна: GRONDHEIM_CITY/Академия/ученики.json.
+def _zapisat_v_akademiyu(imya: str) -> tuple:
+    """(получилось, что сказать). Место занято/мест нет — честно вернём."""
+    try:
+        import sys as _s
+        _repo = Path(__file__).resolve().parent.parent
+        for _p in (str(_repo), str(_repo / "Брат")):
+            if _p not in _s.path:
+                _s.path.insert(0, _p)
+        # VYPUSK_V1: зачисляет РЕКТОР — одна дверь. Раньше здесь была
+        # своя рука Брата, и она клала куцую запись без статуса,
+        # дисциплин и поля под диплом. Оттого в реестре и был разнобой.
+        _s.path.insert(0, str(_repo / "Академия"))
+        import rektor
+        return rektor.zachislit(imya)
+    except Exception as e:
+        return False, f"Академия недоступна ({e})"
 
 
 def _pasport(imya: str):
@@ -120,10 +194,12 @@ def _sohranit_zhitelya(imya: str, tip: str, fraza: str) -> tuple:
 
 def page_rabota():
     ui.add_head_html(CSS)
+    ui.add_head_html("<style>" + _BELYY_SHRIFT + "</style>")   # BELYY_SHRIFT_V1
     ui.query("body").classes("rab-page")
 
     sost: dict[str, Any] = {"vybrano": None, "poisk": "", "filtr": "все",
-                            "rezhim": "места", "zhitel": None}
+                            "rezhim": "места", "zhitel": None,
+                            "vybor_kogo": None}
     refs: dict[str, Any] = {}
 
     # ── шапка ────────────────────────────────────────────────
@@ -132,7 +208,7 @@ def page_rabota():
         refs["schet"] = ui.html("")
         # ZHITELI_V_RABOTE_V1: одна дверь, две стороны дела.
         with ui.row().style("gap:4px; margin-left:10px;"):
-            for _r in ("места", "жители"):
+            for _r in ("места", "жители", "выбор"):
                 def _rezhim(r=_r):
                     sost["rezhim"] = r
                     sost["vybrano"] = None
@@ -145,7 +221,12 @@ def page_rabota():
                     "color:rgba(139,233,253,0.9); "
                     "background:rgba(139,233,253,0.10);")
         ui.element("div").style("flex:1")
-        ui.button("← БРАТ", on_click=lambda: ui.navigate.to("/brat")).props(
+        # STRANICA_CEHOV_V1: отсюда к картриджам Биржи
+        ui.button("ЦЕХА",
+                  on_click=lambda: ui.navigate.to("/ceha", new_tab=True)).props(
+            "flat no-caps").style("font-size:0.72rem; "
+                                  "color:rgba(139,233,253,0.85);")
+        ui.button("← БРАТ", on_click=lambda: ui.navigate.to("/brat", new_tab=True)).props(
             "flat no-caps").style("font-size:0.72rem; "
                                   "color:rgba(139,233,253,0.85);")
 
@@ -233,8 +314,134 @@ def page_rabota():
                     f"border-radius:8px; background:rgba(255,255,255,0.04); "
                     f"margin-bottom:3px;")
 
+    def risovat_vybory():
+        """VYBOR_VKLADKOY_V1: что у трейдеров ЗАПИСАНО, а не сказано.
+
+        Раньше это показывал скрипт из терминала. Место ему здесь:
+        выбор входа — часть работы, и смотреть на него надо там же, где
+        смотрят на места и людей.
+        """
+        refs["derevo"].clear()
+        try:
+            import sys as _s
+            _b = str(Path(__file__).resolve().parent.parent / "Биржа")
+            if _b not in _s.path:
+                _s.path.insert(0, _b)
+            import vybor as _V
+        except Exception as e:
+            with refs["derevo"]:
+                ui.label(f"механизм выбора не поднялся: {e}").style(
+                    "color:rgba(255,180,60,0.85); font-size:0.78rem;")
+            return
+
+        stroki, teksty = [], {}
+        for m in R.mesta():
+            if not m.get("цех") or not m.get("слот"):
+                continue
+            kto = m.get("кто_сидит") or ""
+            if not kto:
+                continue
+            try:
+                ist = _V.istoriya(m["цех"], m["слот"])
+            except Exception:
+                ist = []
+            posl = ist[-1] if ist else {}
+            stroki.append({"кто": kto, "место": m["название"],
+                           "цех": m["цех"], "слот": m["слот"],
+                           "текст": (posl.get("текст") or "").strip(),
+                           "когда": str(posl.get("когда", ""))[:16],
+                           "раз": len(ist)})
+            if posl.get("текст"):
+                teksty.setdefault(posl["текст"].strip().lower(), []).append(kto)
+
+        with refs["derevo"]:
+            if not stroki:
+                ui.label("на местах никого — выбирать некому").style(
+                    "color:rgba(255,255,255,0.35); font-size:0.78rem;")
+                return
+            for s in stroki:
+                def _vyb(s=s):
+                    sost["vybor_kogo"] = s
+                    risovat_kartu()
+
+                est = bool(s["текст"])
+                cvet = ("rgba(80,250,123,0.85)" if est
+                        else "rgba(255,180,60,0.85)")
+                hvost = s["когда"] if est else "выбора нет"
+                ui.button(f'{s["кто"]}  ·  {s["слот"]}  ·  {hvost}',
+                          on_click=_vyb).props("flat no-caps").style(
+                    f"width:100%; text-align:left; font-family:monospace; "
+                    f"font-size:0.74rem; color:{cvet}; padding:5px 10px; "
+                    f"border-radius:8px; background:rgba(255,255,255,0.04); "
+                    f"margin-bottom:3px;")
+
+            sovpali = {t: k for t, k in teksty.items() if len(k) > 1}
+            if sovpali:
+                ui.html('<div class="rab-podpis">одинаковый выбор</div>')
+                for t, k in sovpali.items():
+                    ui.label(f'{", ".join(k)} — «{t[:60]}»').style(
+                        "color:rgba(255,180,60,0.8); font-size:0.72rem;")
+                ui.label("Либо оба правда так решили, либо метка легла "
+                         "не тому.").style(
+                    "color:rgba(255,255,255,0.45); font-size:0.7rem;")
+
+    def risovat_kartu_vybora():
+        refs["karta"].clear()
+        s = sost.get("vybor_kogo")
+        with refs["karta"]:
+            if not s:
+                ui.label("Выбери человека слева — покажу, что у него "
+                         "записано.").style(
+                    "color:rgba(255,255,255,0.4); font-size:0.82rem;")
+                return
+            try:
+                import sys as _s2
+                _b = str(Path(__file__).resolve().parent.parent / "Биржа")
+                if _b not in _s2.path:
+                    _s2.path.insert(0, _b)
+                import vybor as _V
+                ist = _V.istoriya(s["цех"], s["слот"])
+            except Exception as e:
+                ui.label(f"не читается: {e}").style(
+                    "color:rgba(255,180,60,0.85); font-size:0.8rem;")
+                return
+
+            ui.html(f'<div style="font-weight:800; font-size:0.92rem;">'
+                    f'{s["кто"]}</div>'
+                    f'<div style="color:rgba(255,255,255,0.35); '
+                    f'font-size:0.68rem; font-family:monospace; '
+                    f'margin-bottom:12px;">{s["место"]} · {s["слот"]}</div>')
+
+            if not ist:
+                ui.label("Выбора нет — метки не записано.").style(
+                    "color:rgba(255,180,60,0.85); font-size:0.85rem;")
+                ui.label("Значит всё, что он говорит про свой вход, взято "
+                         "из книги сейчас, а не решено им однажды. Спроси "
+                         "его в кабинете Биржи: «какой у тебя вход и почему "
+                         "именно он твой» — и пусть объявит строкой ВЫБОР.").style(
+                    "color:rgba(255,255,255,0.5); font-size:0.76rem; "
+                    "margin-top:6px;")
+                return
+
+            posl = ist[-1]
+            ui.label(posl.get("текст", "")).style(
+                "color:rgba(80,250,123,0.9); font-size:0.86rem;")
+            ui.label(f'выбрано {str(posl.get("когда",""))[:16]}').style(
+                "color:rgba(255,255,255,0.45); font-size:0.72rem;")
+
+            if len(ist) > 1:
+                ui.html('<div class="rab-podpis">передумывал</div>')
+                for z in reversed(ist[:-1]):
+                    ui.label(f'{str(z.get("когда",""))[:16]} — '
+                             f'{z.get("текст","")}').style(
+                        "color:rgba(255,255,255,0.5); font-size:0.74rem; "
+                        "font-family:monospace;")
+
     def risovat_derevo():
         obnovit_schet()
+        if sost["rezhim"] == "выбор":
+            risovat_vybory()
+            return
         if sost["rezhim"] == "жители":
             risovat_zhiteley()
             return
@@ -337,8 +544,16 @@ def page_rabota():
                 "width:100%; font-size:0.78rem;")
 
             def _sohr():
-                ok, msg = _sohranit_zhitelya(imya, (sel.value or "").strip(),
+                _tip_novyy = (sel.value or "").strip()
+                ok, msg = _sohranit_zhitelya(imya, _tip_novyy,
                                              (fr.value or "").strip())
+                # ROL_V_RABOTU_V1: студент — не только слово в паспорте.
+                # Раньше место в Академии занимала «Роль»; теперь мы.
+                if ok and _tip_novyy == "студент":
+                    ok_ak, msg_ak = _zapisat_v_akademiyu(imya)
+                    msg = f"{msg} · Академия: {msg_ak}"
+                    ui.notify(("🎓 " if ok_ak else "⚠ Академия: ") + msg_ak,
+                              color="positive" if ok_ak else "warning")
                 ui.notify(("🪑 " if ok else "⚠ ") + msg,
                           color="positive" if ok else "negative")
                 risovat_derevo()
@@ -353,6 +568,9 @@ def page_rabota():
                 "border:1px solid rgba(120,168,201,0.55);")
 
     def risovat_kartu():
+        if sost["rezhim"] == "выбор":
+            risovat_kartu_vybora()
+            return
         if sost["rezhim"] == "жители":
             risovat_kartu_zhitelya()
             return
@@ -545,3 +763,15 @@ def page_rabota():
 # KOROTKIY_BLANK_V1 - marker
 
 # ZHITELI_V_RABOTE_V1 - marker
+
+# SVOYO_OKNO_V1 - marker
+
+# INSTRUMENT_NAZNACHIT_ILI_SAM_V1 - marker
+
+# PANEL_TREYDERA_V1 - marker
+
+# VYBOR_VKLADKOY_V1 - marker
+
+# ROL_V_RABOTU_V1 - marker
+
+# VYPUSK_V1 - marker

@@ -74,6 +74,31 @@ def _zastroyshchik():
     page_zastroyshchik()
 
 
+# OSTROV_DVERI_OTCHYOTA_V1: отчёт прогона (кабинет Биржи ведёт сюда)
+# и «← Город» из кабинета — на острове это главная острова.
+from ui_otchyot import page_otchyot   # noqa: E402
+
+
+@ui.page("/otchyot")
+def _otchyot0():
+    page_otchyot()
+
+
+@ui.page("/otchyot/{ceh}")
+def _otchyot1(ceh: str = "торговый_хаос"):
+    page_otchyot(ceh)
+
+
+@ui.page("/otchyot/{ceh}/{papka}")
+def _otchyot2(ceh: str = "торговый_хаос", papka: str = ""):
+    page_otchyot(ceh, papka)
+
+
+@ui.page("/grondheim")
+def _gorod():
+    page_ostrov()
+
+
 @ui.page("/mayak")
 def _mayak():
     page_mayak()
@@ -81,6 +106,7 @@ def _mayak():
 
 if __name__ in {"__main__", "__mp_main__"}:
     print("ОСТРОВ: кабинет /torg, работа /rabota, маяк /mayak")
-    ui.run(title="Остров Надежды", port=8080, show=False, reload=False)
+    ui.run(title="Остров Надежды", port=8080, show=False, reload=False,
+           storage_secret="ostrov")
 
 # PEREVOZKA_KNOPKI_V1 - marker
