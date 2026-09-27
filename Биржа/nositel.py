@@ -856,3 +856,153 @@ def otmetit_yarkim_slotom(ceh: str, slot: str, tekst: str, otkuda: str = "раб
 # YARKOE_V1 - marker
 
 # CHAT_KNOPKI_I_OSMYSLIT_V1 - marker
+
+
+# ═══════════════════════════════════════════════════════════
+# SKVOZNAYA_PAMYAT_V1 (27.09) — ЧЕСТНЫЙ СЛЕД ПРОГОНА
+# ═══════════════════════════════════════════════════════════
+# Слово Шефа: «если следы будут, то это не декорации; так и дома о
+# работе потолковать — вдруг крепче осядет». Прогон по истории — учёба:
+# сделки по ходу не трогают ни опыт, ни заряд жителя. Когда прогон
+# кончился — ОДИН след, голыми фактами, без модели:
+#   • в её дом, работа/работа.jsonl: итог прогона и каждая сделка — это
+#     ПАМЯТЬ, она едет с жителем и вспоминается где угодно;
+#   • в «замечаю за собой» (маяки): на чём ловил город. Ключ у поимки
+#     постоянный — повторится в следующем прогоне, у маяка растёт счёт
+#     («уже 2 раза — похоже на закономерность»).
+# Осмыслять — самой, в разговоре с Шефом («Осмыслить»).
+
+_LOVUSHKI_PROGONA = {
+    "ЭКСТРЕМУМ": ("progon_ne_na_krayu",
+                  "попытка войти не на крае хода — край ещё не взят"),
+    "СВОИ ЧИСЛА": ("progon_svoi_chisla",
+                   "попытка войти, когда мои же числа расхождения не показывали"),
+    "ОДНА ЯМА": ("progon_odna_yama",
+                 "попытка войти при одной яме AO — сравнивать было не с чем"),
+    "ПРИСЕД": ("progon_bez_prisedayushchego",
+               "попытка войти без приседающего в окне"),
+}
+_TREYDER_SLOT = {"BRUT": "A06", "AVANTURIST": "A07", "KONSERVATOR": "A08"}
+
+
+def _raz(n: int) -> str:
+    return f"{n} раза" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) \
+        else f"{n} раз"
+
+
+def _chislo(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+
+def sledy_progona(papka, progon_id: str = "", zakrytiya=None,
+                  ceh: str = "торговый_хаос") -> list:
+    """Прогон кончился → каждому жителю-трейдеру один честный след.
+    Возвращает строки для лога. Упадёт — прогон уже записан, не страшно."""
+    import json as _js
+    import re as _re
+    from datetime import datetime as _dt, timezone as _tz
+
+    papka = Path(papka)
+    out = []
+    mesta = []
+    try:
+        for s in (papka / "места.jsonl").read_text(encoding="utf-8").splitlines():
+            if s.strip():
+                try:
+                    mesta.append(_js.loads(s))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    try:
+        log = (papka / "лог.txt").read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        log = ""
+    zakr = list(zakrytiya or [])
+
+    po_slotam = {}
+    for m in mesta:
+        s = m.get("слот")
+        if not s:
+            continue
+        inf = po_slotam.setdefault(s, {"sym": m.get("инструмент") or "",
+                                       "tf": m.get("этаж") or "", "daty": []})
+        if m.get("когда_на_рынке"):
+            inf["daty"].append(str(m["когда_на_рынке"]))
+
+    for slot, inf in po_slotam.items():
+        try:
+            n = dusha_slota(ceh, slot)
+            if not n:
+                continue
+            nos = n["носитель"]
+            d = _dvizhok(nos["папка"])
+            if d is None:
+                continue
+            imya = nos.get("имя") or Path(nos["папка"]).name
+            daty = sorted(inf["daty"])
+            period = f"{daty[0]}–{daty[-1]}" if daty else ""
+            opis = " ".join(x for x in (inf["sym"], inf["tf"], period) if x)
+
+            moi = [z for z in zakr
+                   if _TREYDER_SLOT.get(str(z.get("trader") or "").upper()) == slot
+                   and (not inf["sym"] or z.get("symbol") in (None, "", inf["sym"]))]
+            r = [v for v in (_chislo(z.get("pnl_r")) for z in moi) if v is not None]
+
+            lov = {}
+            for line in log.splitlines():
+                mm = _re.match(r"\s*\[(ЭКСТРЕМУМ|СВОИ ЧИСЛА|ОДНА ЯМА|ПРИСЕД)\] ✗ "
+                               r"(\S+) (\S+)", line)
+                if mm and mm.group(2) == inf["sym"] and mm.group(3) == inf["tf"]:
+                    lov[mm.group(1)] = lov.get(mm.group(1), 0) + 1
+
+            itog = (f"Прогон по истории {opis}: мест {len(inf['daty'])}, "
+                    f"сделок закрыто {len(moi)}")
+            if r:
+                _s = round(sum(r), 2)
+                itog += f", итог {'около 0' if abs(_s) < 0.01 else f'{_s:+.2f}'}R"
+            if lov:
+                itog += "; город ловил: " + "; ".join(
+                    f"{_LOVUSHKI_PROGONA[k][1]} — {_raz(v)}" for k, v in lov.items())
+            else:
+                itog += "; город меня не ловил"
+
+            zapisi = [itog]
+            for z in moi:
+                pr = _chislo(z.get("pnl_r"))
+                zapisi.append(
+                    f"Сделка в прогоне {inf['sym']} {inf['tf']}: "
+                    f"{z.get('direction') or ''} вход {z.get('entry')} "
+                    f"({z.get('opened_at') or '?'}), закрыта "
+                    f"{z.get('closed_at') or '?'} — {z.get('close_reason') or '?'}"
+                    + (f": {pr:+.2f}R" if pr is not None else ""))
+
+            dom = Path(nos["папка"]) / "работа"
+            dom.mkdir(parents=True, exist_ok=True)
+            now = _dt.now(_tz.utc).isoformat(timespec="seconds")
+            with open(dom / "работа.jsonl", "a", encoding="utf-8") as f:
+                for fakt in zapisi:
+                    f.write(_js.dumps({
+                        "ts": now, "слой": "работа", "контекст": "работа",
+                        "где": f"Биржа · {slot}", "прогон": progon_id,
+                        "факт": fakt}, ensure_ascii=False) + "\n")
+
+            mayakov = 0
+            for k, v in lov.items():
+                klyuch, fraza = _LOVUSHKI_PROGONA[k]
+                try:
+                    d.dopisat_vyvod(f"Прогон {opis}: {fraza} — город поймал "
+                                    f"{_raz(v)}.", pattern=klyuch, otkuda="прогон")
+                    mayakov += 1
+                except Exception as e:
+                    print(f"[СЛЕД] ⚠️  маяк не лёг ({imya}, {k}): {e}")
+            out.append(f"{imya}: {itog} · в память {len(zapisi)} записи, "
+                       f"в «замечаю за собой» {mayakov}")
+        except Exception as e:
+            out.append(f"{slot}: след не лёг — {e}")
+    return out
+
+# SKVOZNAYA_PAMYAT_V1 - marker

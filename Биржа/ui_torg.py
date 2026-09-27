@@ -66,6 +66,10 @@ class _TeeVyvod:
 
 
 _HERE = Path(__file__).resolve().parent          # Биржа/
+# PYLANCE_TISHE_V1 / SVYAZ_I_PAPKA_V1: память полки загрузчика живёт в
+# модуле — переподключился браузер, страница новая, а разобранные файлы
+# те же. Заводится здесь, один раз, при загрузке модуля.
+_PASPORTA_KESH: dict = {}
 _REPO = _HERE.parent                              # корень репо
 for _p in (_REPO, _HERE):
     if str(_p) not in sys.path:
@@ -2762,6 +2766,19 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                       f", позиций/заявок прошлого прогона снято: {_bylo_p}")
         except Exception as _e_ch:
             print(f"[ПРОГОН] почистить стол не вышло ({_e_ch})")
+        # SKVOZNAYA_PAMYAT_V1: метка прогона — в тетрадь идут события
+        # этого прогона, на стол ложатся только они, опыт по ходу не пишется.
+        _progon_id = (_otchyot.papka.name if _otchyot is not None
+                      else datetime.now().strftime("%Y%m%d_%H%M%S"))
+        try:
+            from hooks import load_trading_state as _lts_pr
+            from hooks import save_trading_state as _sts_pr
+            _t_pr = _lts_pr()
+            _t_pr["прогон"] = {"id": _progon_id,
+                               "начат": datetime.now().isoformat(timespec="seconds")}
+            _sts_pr(_t_pr)
+        except Exception as _e_pr:
+            print(f"[ПРОГОН] метка прогона не встала ({_e_pr})")
         try:
             _bylo_moment = istoriya.gde_stoim()
         except Exception:
@@ -2806,6 +2823,11 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
             if not _vse:
                 continue
             _daty = [b.get("date", "") for b in _vse]
+            # PYLANCE_TISHE_V1: «год назад» в барах — заранее, для обоих
+            # случаев: ниже он нужен и тогда, когда задана только «по дату».
+            _v_godu = {"MN1": 12, "W1": 52, "D1": 252, "H12": 500,
+                       "H8": 750, "H4": 1500, "H1": 6000}.get(
+                           str(_tf).upper(), 1500)
             if _ot_daty:
                 _s = next((j for j, d in enumerate(_daty)
                            if d >= _ot_daty), None)
@@ -2816,9 +2838,6 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 # год назад: на H4 это около 1500 баров, на D1 — 250.
                 # Берём по числу баров, а не по календарю: файл может
                 # кончаться раньше сегодняшнего дня.
-                _v_godu = {"MN1": 12, "W1": 52, "D1": 252, "H12": 500,
-                           "H8": 750, "H4": 1500, "H1": 6000}.get(
-                               str(_tf).upper(), 1500)
                 _s = max(0, len(_daty) - _v_godu)
             _s = max(_s, 300)          # ядру нужно окно на разгон
             # TESTER_PULT_V1: верхняя граница отрезка. Раньше её не
@@ -3222,6 +3241,15 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                     pass
             state["tester_running"] = False
             state["stop_requested"] = False
+            # SKVOZNAYA_PAMYAT_V1: прогон кончился (или сорвался) — метку снять
+            try:
+                from hooks import load_trading_state as _lts_pr9
+                from hooks import save_trading_state as _sts_pr9
+                _t_pr9 = _lts_pr9()
+                if _t_pr9.pop("прогон", None) is not None:
+                    _sts_pr9(_t_pr9)
+            except Exception as _e_pr9:
+                print(f"[ПРОГОН] метка прогона не снялась ({_e_pr9})")
             try:
                 istoriya.postavit(_bylo_moment)
             except Exception:
@@ -3242,6 +3270,15 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
                 _otn = _gde
             _hvost = f" · отчёт: {_otn}"
             print(f"[ОТЧЁТ] 📄 {_gde}")
+            # SKVOZNAYA_PAMYAT_V1: один честный след в память каждого
+            # трейдера — голыми фактами, без модели.
+            try:
+                import nositel as _nos_sl
+                _zakr_sl = _otchyot._zakrytiya() if _otchyot is not None else []
+                for _st in _nos_sl.sledy_progona(_gde, _progon_id, _zakr_sl):
+                    print(f"[СЛЕД] 🧭 {_st}")
+            except Exception as _e_sl:
+                print(f"[СЛЕД] не лёг ({_e_sl}) — отчёт цел")
         # ZHURNAL_PROGONA_V1: журнал сделок вместо списка фраз.
         # Даты берём из «когда_на_рынке» (отчёт кладёт их туда), а
         # места делим по ДЕЙСТВИЮ: вход, ведение, отказ, молчание.
@@ -3759,11 +3796,7 @@ def page_torg(tseh_id: str = "торговый_хаос") -> None:
 
     # SVYAZ_I_PAPKA_V1: память полки живёт в модуле, а не в странице —
     # переподключился браузер, страница новая, а разобранные файлы те же.
-    global _PASPORTA_KESH
-    try:
-        _PASPORTA_KESH
-    except NameError:
-        _PASPORTA_KESH = {}
+    global _PASPORTA_KESH   # заведена в начале модуля (PYLANCE_TISHE_V1)
 
     def _passport_from_csv(path):
         # SVYAZ_I_PAPKA_V1: помним разобранные файлы по пути, размеру и

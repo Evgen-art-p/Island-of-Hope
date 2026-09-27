@@ -660,9 +660,12 @@ def _treyling_za_zubami(state: dict):
 #   торговый_хаос/слоты/A07/данные/diary_avan.jsonl
 #   торговый_хаос/слоты/A08/данные/diary_cons.jsonl
 _DIARY_OF = {
-    "BRUT":        ("A06", "diary_brut.jsonl"),
-    "AVANTURIST":  ("A07", "diary_avan.jsonl"),
-    "KONSERVATOR": ("A08", "diary_cons.jsonl"),
+    # SKVOZNAYA_PAMYAT_V1: имена тетрадей были старые (diary_brut…), а
+    # мозги пишут в diary_A06…; исход не находил тетрадь и не вписывался —
+    # трейдер видел свои входы без результата, будто позиции ещё открыты.
+    "BRUT":        ("A06", "diary_A06.jsonl"),
+    "AVANTURIST":  ("A07", "diary_A07.jsonl"),
+    "KONSERVATOR": ("A08", "diary_A08.jsonl"),
 }
 
 
@@ -2043,6 +2046,13 @@ def _judge_trader_by_result(pos: dict, pnl_r):
 
     pnl.jsonl эта функция не трогает. Упадёт — торговый цикл цел.
     """
+    # SKVOZNAYA_PAMYAT_V1: в прогоне по истории опыт и заряд жителя не
+    # трогаем — сделка учебная. Честный след ляжет один раз, в конце.
+    try:
+        if (load_trading_state().get("прогон") or {}).get("id"):
+            return
+    except Exception:
+        pass
     try:
         import sys as _s
         from pathlib import Path as _P

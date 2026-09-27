@@ -459,6 +459,8 @@ def _append_diary(signal: dict, diary_entry: dict, market: dict, table: dict):
         "что":       signal.get("brut_action"),
         "почему":    signal.get("brut_reason"),
         "рычаг":     bool(signal),
+        # SKVOZNAYA_PAMYAT_V1: из какого прогона (None — живая работа)
+        "прогон":    ((table or {}).get("прогон") or {}).get("id"),
         "ключ":      _klyuch_svoy(),
         # голос трейдера о себе — вводная и поступок (из diary_entry промта)
         "input":     (diary_entry or {}).get("input", ""),
@@ -494,7 +496,18 @@ def _moi_sobytiya(n: int = 5, as_of_bar_time=None) -> list:
     except Exception:
         pass
     svoi = []
+    # SKVOZNAYA_PAMYAT_V1: на стол — только события ЭТОГО прогона (в
+    # живой работе — только живые). Тетрадь одна на все прогоны, и по
+    # одной дате в стопку лезли чужие: H4 в дневку, декабрь в май.
+    _progon = None
+    try:
+        from hooks import load_trading_state as _lts_p
+        _progon = (_lts_p().get("прогон") or {}).get("id")
+    except Exception:
+        pass
     for e in _read_recent_diary(400, as_of_bar_time=as_of_bar_time):
+        if "прогон" not in e or e.get("прогон") != _progon:
+            continue                      # старое без метки или чужой прогон
         verdikt = str(e.get("verdict") or "").upper()
         vhod = verdikt in ("APPROVED", "ENTER", "OK") or e.get("entry")
         itog = e.get("result") not in (None, "")

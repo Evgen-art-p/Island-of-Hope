@@ -1043,6 +1043,43 @@ class Dvizhok:
                             pass
             except Exception:
                 pass
+        # SKVOZNAYA_PAMYAT_V1: работа и разговоры — тоже её память, и она
+        # вспоминается где угодно. Работа (итоги прогонов, сделки) — в
+        # работа/работа.jsonl, разговоры — в чатах дома и в Академии.
+        # Книги и знания сюда не идут: их не носят с собой.
+        try:
+            _pr = self.dom / "работа" / "работа.jsonl"
+            if _pr.exists():
+                for _ln in _pr.read_text(encoding="utf-8").splitlines():
+                    _ln = _ln.strip()
+                    if _ln:
+                        try:
+                            zapisi.append(json.loads(_ln))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        for _pap, _kont in (("чаты", "общение"), ("академия_чаты", "учёба")):
+            try:
+                for _f in sorted((self.dom / _pap).glob("*.json")):
+                    _ts = _f.stem.replace("чат_", "")[:10]
+                    _d = json.loads(_f.read_text(encoding="utf-8"))
+                    for _m in (_d if isinstance(_d, list) else []):
+                        if not isinstance(_m, dict):
+                            continue
+                        _c = _m.get("content")
+                        if isinstance(_c, list):
+                            _c = " ".join(str(x.get("text") or "") for x in _c
+                                          if isinstance(x, dict))
+                        _c = str(_c or "").strip()
+                        if not _c:
+                            continue
+                        zapisi.append({
+                            "факт": _c[:500], "контекст": _kont, "ts": _ts,
+                            "от кого": ("Шеф" if _pap == "чаты"
+                                        and _m.get("role") == "user" else "")})
+            except Exception:
+                pass
         # оценка: сколько слов запроса встретилось в факте записи
         # PAMYAT_RABOTA_ZHIZN_V1: о чём спрашиваем — о работе или о
         # жизни. За столом нужна практика, а не разговоры; дома —
@@ -1050,21 +1087,21 @@ class Dvizhok:
         nuzhno = (o_chyom or "").strip().lower()
         naydeno = []
         for z in zapisi:
+            # SKVOZNAYA_PAMYAT_V1 (слово Шефа): любую свою память житель
+            # вспоминает где угодно. Место — не стена, а порядок: ближнее
+            # к месту чуть выше, остальное тоже находится.
+            _blizhe = False
             if nuzhno:
                 k = kontekst_zapisi(z)
                 if nuzhno.startswith("работ"):
                     # UCHYOBA_NA_STOLE_V1: работа = практика + учёба
-                    if k not in RABOCHIE_KONTEKSTY:
-                        continue
+                    _blizhe = k in RABOCHIE_KONTEKSTY
                 elif nuzhno.startswith("практик"):
-                    if k not in PRAKTIKA_KONTEKSTY:
-                        continue
+                    _blizhe = k in PRAKTIKA_KONTEKSTY
                 elif nuzhno.startswith("учёб") or nuzhno.startswith("учеб"):
-                    if k not in UCHEBNYE_KONTEKSTY:
-                        continue
+                    _blizhe = k in UCHEBNYE_KONTEKSTY
                 elif nuzhno.startswith("жизн"):
-                    if k not in ZHIZNENNYE_KONTEKSTY:
-                        continue
+                    _blizhe = k in ZHIZNENNYE_KONTEKSTY
             # VSPOMNIT_METKI_POLYA_V1 (05.09): метки/маяки хранят
             # содержание под ключом "текст", а sensory/resonance/
             # archive — под "факт". Без фоллбэка любая метка и маяк
@@ -1091,6 +1128,8 @@ class Dvizhok:
                 score += self.YARLYK_VES
             if iskomyj_tonus and z.get("тонус") == iskomyj_tonus:
                 score += 2   # PAMYAT_ISKRA_V1: тон совпал — весит как два слова
+            if score > 0 and _blizhe:
+                score += 1          # SKVOZNAYA_PAMYAT_V1: ближнее к месту выше
             if score > 0:
                 # VSPOMNIT_METKI_POLYA_V1: та же история со временем —
                 # метки/маяки пишут "когда", не "ts".
@@ -1111,6 +1150,8 @@ class Dvizhok:
                 otkuda = " · учёба"
             elif k in PRAKTIKA_KONTEKSTY:
                 otkuda = " · практика"
+            elif k in ZHIZNENNYE_KONTEKSTY:
+                otkuda = " · жизнь"      # SKVOZNAYA_PAMYAT_V1: разговор, дом
             # VSPOMNIT_METKI_POLYA_V1: и здесь тот же фоллбэк —
             # метки/маяки хранят текст под «текст», не «факт».
             # METKA_KAK_KLYUCH_V1: закладка и имя — в выдачу. Знание
@@ -1123,9 +1164,14 @@ class Dvizhok:
             _ot = str(z.get("от кого") or "").strip()
             if _ot:
                 _hvost += f" · от: {_ot}"
+            # SKVOZNAYA_PAMYAT_V1: вспоминается след, а не страница книги —
+            # длинное (вставленная глава, весь ответ) режем до сути.
+            _t = str(z.get('текст') or z.get('факт') or '')
+            if len(_t) > 600:
+                _t = _t[:600].rstrip() + " …"
             stroki.append(
                 f"— [{ts}{otkuda}] "
-                f"{z.get('текст') or z.get('факт') or ''}{_hvost}")
+                f"{_t}{_hvost}")
         return "\n".join(stroki)
 
     # ═══════════════════════════════════════════════════════
