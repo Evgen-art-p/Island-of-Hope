@@ -106,7 +106,7 @@ def _mayak():
 
 if __name__ in {"__main__", "__mp_main__"}:
     print("ОСТРОВ: кабинет /torg, работа /rabota, маяк /mayak")
-    ui.run(title="Остров Надежды", port=8081, show=False, reload=False,
+    ui.run(title="Остров Надежды", port=8080, show=False, reload=False,
            storage_secret="ostrov")
 
 # PEREVOZKA_KNOPKI_V1 - marker

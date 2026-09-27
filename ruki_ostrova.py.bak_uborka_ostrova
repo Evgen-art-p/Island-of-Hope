@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 # RUKI_OSTROVA_V1
 # RUKI_OSTROVA_V2: жильё квартала + её слова (27.09)
-# RUKI_OSTROVA_V3: рука УБОРКА — уборщик острова (27.09)
 """
 РУКИ ОСТРОВА — второй ряд на плашке главной, пока на острове нет Брата.
 
@@ -320,120 +319,7 @@ def okno_propiski():
     dlg.open()
 
 
-# ══════════════════════════════════════════════════════════════
-# УБОРКА — уборщик острова (uborshchik.py), как ЧИСТКА в городе
-# ══════════════════════════════════════════════════════════════
-
-def _razvedka():
-    import importlib
-    import uborshchik as U
-    importlib.reload(U)
-    teksty = dict(U._tekstovye())
-    gotovye, zhdut = U.sobrat_patchi(teksty)
-    gruppy = [
-        ("копии, оставленные патчами", U.sobrat_kopii()),
-        ("патчи, которые отработали", gotovye),
-        ("разовое и заменённое", U.sobrat_poimenno(U.RAZOVYE)),
-    ]
-    return {"U": U, "gruppy": gruppy, "zhdut": zhdut,
-            "zaselo": U.zaselo_v_repe()}
-
-
-async def okno_uborki():
-    from nicegui import run, ui
-
-    with ui.dialog() as dlg, ui.card().style(_KARTA + " min-width:520px;"):
-        telo = ui.element("div").style("width:100%;")
-        with telo:
-            ui.html(_ZAG.format("🧹 УБОРКА ОСТРОВА"))
-            ui.html(_TIHO.format("Смотрю, что накопилось…"))
-    dlg.open()
-
-    try:
-        r = await run.io_bound(_razvedka)
-    except Exception as e:
-        telo.clear()
-        with telo:
-            ui.html(_ZAG.format("🧹 УБОРКА ОСТРОВА"))
-            ui.html(_TIHO.format(f"уборщик не завёлся: {e}"))
-            ui.button("закрыть", on_click=dlg.close).props("flat").style(_NAZAD)
-        return
-
-    U = r["U"]
-    nahodki = [x for _, spisok in r["gruppy"] for x in spisok]
-
-    def risovat():
-        telo.clear()
-        with telo:
-            ui.html(_ZAG.format("🧹 УБОРКА ОСТРОВА"))
-            ui.html(_TIHO.format(
-                "Ничего не удаляется. В чулан (_УБОРКА) — с манифестом, "
-                "откуда и как вернуть. Чулан в репу не идёт."))
-            for imya, spisok in r["gruppy"]:
-                with ui.expansion(f"{imya} — {len(spisok)}").style(
-                        "width:100%; font-size:0.78rem; "
-                        "color:rgba(255,255,255,0.8);"):
-                    for p, prichina in sorted(spisok, key=lambda x: str(x[0])):
-                        ui.label(f"{p.relative_to(U.KOREN)} · {prichina}").style(
-                            "font-size:0.7rem; font-family:monospace; "
-                            "color:rgba(255,255,255,0.55);")
-            if r["zhdut"]:
-                with ui.expansion(f"не трогаю — {len(r['zhdut'])}").style(
-                        "width:100%; font-size:0.78rem; "
-                        "color:rgba(255,255,255,0.5);"):
-                    for p, prichina in r["zhdut"]:
-                        ui.label(f"{p.name} · {prichina}").style(
-                            "font-size:0.7rem; font-family:monospace; "
-                            "color:rgba(255,255,255,0.45);")
-            if r["zaselo"]:
-                with ui.expansion(f"засело в репе — {len(r['zaselo'])}").style(
-                        "width:100%; font-size:0.78rem; "
-                        "color:rgba(255,255,255,0.8);"):
-                    ui.label("Кэш питона и старые переезды: .gitignore их уже "
-                             "закрыл, но они попали в репу раньше. Из репы "
-                             "уберу, на диске останутся как были.").style(
-                        "font-size:0.72rem; color:rgba(255,255,255,0.55);")
-                    for s in r["zaselo"][:60]:
-                        ui.label(s).style("font-size:0.68rem; font-family:monospace; "
-                                          "color:rgba(255,255,255,0.45);")
-
-            async def _v_chulan():
-                if not nahodki:
-                    ui.notify("убирать нечего — чисто", color="info")
-                    return
-                res = await run.io_bound(U.perenesti, nahodki, True)
-                ui.notify(f"🧹 в чулан: {len(res.get('манифест', []))} · "
-                          f"{res['папка'].relative_to(U.KOREN)}", color="positive")
-                r["gruppy"] = [(i, []) for i, _ in r["gruppy"]]
-                nahodki.clear()
-                risovat()
-
-            async def _iz_repy():
-                ok, msg = await run.io_bound(U.ubrat_iz_repy, r["zaselo"])
-                ui.notify(msg, color="positive" if ok else "negative")
-                if ok:
-                    r["zaselo"] = []
-                    risovat()
-
-            with ui.row().style("width:100%; gap:8px; margin-top:12px;"):
-                ui.button(f"в чулан ({len(nahodki)})", on_click=_v_chulan).props(
-                    "flat no-caps").style(
-                    "flex:1; padding:9px; border-radius:10px; font-weight:700; "
-                    "color:#fff3dc; background:rgba(230,180,110,0.22); "
-                    "border:1px solid rgba(240,200,140,0.42);")
-                if r["zaselo"]:
-                    ui.button(f"убрать из репы ({len(r['zaselo'])})",
-                              on_click=_iz_repy).props("flat no-caps").style(
-                        "flex:1; padding:9px; border-radius:10px; font-weight:700; "
-                        "color:#eaf6ff; background:rgba(120,190,230,0.22); "
-                        "border:1px solid rgba(140,200,240,0.42);")
-            ui.button("закрыть", on_click=dlg.close).props("flat").style(_NAZAD)
-
-    risovat()
-
-
 # второй ряд плашки: (надпись, что делает). Брат заберёт себе этот список.
 RYAD = [
     ("ПРОПИСКА", okno_propiski),
-    ("УБОРКА", okno_uborki),
 ]

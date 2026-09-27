@@ -31,7 +31,7 @@ if sys.platform == "win32":
         pass
 
 KOREN = Path(__file__).resolve().parent
-PORT = 8081   # OSTROV_PORT_8081_V1: город на 8080, остров рядом
+PORT = 8080
 
 BIBLIOTEKI = [
     ("nicegui", "nicegui"),
