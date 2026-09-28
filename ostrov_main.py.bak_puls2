@@ -104,17 +104,6 @@ def _mayak():
     page_mayak()
 
 
-# PULS_OSTROVA_V2 — остров сигналит домой сам, пока поднят (слово Шефа
-# 28.09): раз в 5 минут «я жив», раз в час — со сводкой. Сломается пульс —
-# остров живёт дальше, связь для обмена, не для жизни.
-try:
-    from nicegui import app as _app_puls
-    import ostrov_puls as _puls
-    _app_puls.on_startup(_puls.zapustit_fonom)
-except Exception as _e_puls:
-    print(f"[ПУЛЬС] не завёлся: {_e_puls}")
-
-
 if __name__ in {"__main__", "__mp_main__"}:
     print("ОСТРОВ: кабинет /torg, работа /rabota, маяк /mayak")
     ui.run(title="Остров Надежды", port=8081, show=False, reload=False,

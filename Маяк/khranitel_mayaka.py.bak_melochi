@@ -221,36 +221,18 @@ def svodka_tekstom() -> str:
     if vsego_mest:
         imena = [g["имя"] for g in gor["города"] + gor["острова"]]
         stroki.append(f"На связи миры: {', '.join(imena)}.")
-        # MAYAK_SVODKI_V2: одна запись на мир — жив ли, когда пульс
-        # (по-человечески, местным временем), что сказал о себе, когда
-        # пришла сводка и что в ней тревожного (раздел 7 отчёта).
-        def _po_chel(_iso):
-            try:
-                from datetime import datetime as _dt, timezone as _tz
-                _t = _dt.fromisoformat(str(_iso))
-                if _t.tzinfo is None:
-                    _t = _t.replace(tzinfo=_tz.utc)
-                _min = (_dt.now(_tz.utc) - _t).total_seconds() / 60
-                _naz = (f"{_min:.0f} мин назад" if _min < 90 else
-                        f"{_min / 60:.0f} ч назад" if _min < 48 * 60 else
-                        f"{_min / 1440:.0f} дн назад")
-                return _t.astimezone().strftime("%d.%m %H:%M") + ", " + _naz, _min
-            except Exception:
-                return str(_iso or "—"), None
-
+        # MAYAK_SVODKI_V1: по каждому миру — пульс, что сказал о себе,
+        # когда пришла сводка и что в ней тревожного (раздел 7 отчёта).
         for _rod, _polka in (("город", GORODA_DIR), ("остров", OSTROVA_DIR)):
             for _g in gor["города" if _rod == "город" else "острова"]:
                 _k = _read_json(_polka / _g["id"] / "город.json", {}) or {}
-                _kogda, _min = _po_chel(_k.get("последний_пульс"))
-                _zhiv = "на связи" if (_min is not None and _min < 30) else "молчит"
-                stroki.append(f"• {_g['имя']} ({_rod}) — {_zhiv}; последний пульс "
-                              f"{_kogda}; пульсов {_k.get('пульсов', 0)}")
+                _s = f"• {_g['имя']} ({_rod}): последний пульс {_k.get('последний_пульс') or '—'}"
                 if _k.get("числа"):
-                    stroki.append("  о себе: " + ", ".join(
-                        f"{a}: {b}" for a, b in _k["числа"].items()))
+                    _s += "; о себе: " + ", ".join(f"{a}: {b}" for a, b in _k["числа"].items())
+                stroki.append(_s)
                 _put = _polka / _g["id"] / "сводка.md"
                 if _put.is_file():
-                    stroki.append(f"  сводка от {_po_chel(_k.get('сводка_когда'))[0]}")
+                    stroki.append(f"  сводка от {_k.get('сводка_когда') or '?'}")
                     try:
                         _t = _put.read_text(encoding="utf-8")
                         _i = _t.find("## 7.")

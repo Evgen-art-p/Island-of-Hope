@@ -48,10 +48,6 @@ KEY_HEADER = "X-Grondheim-Key"
 
 RODY = ("город", "остров")
 
-# MAYAK_SVODKI_V1: пульс может нести сводку мира — его отчёт тем же
-# сканером, что у материка. Предел — чтобы чужой мир не завалил диск.
-SVODKA_MAX = 150_000
-
 
 # ═══════════════════════════════════════════════════════════
 # СХЕМА — что считается правильным пульсом
@@ -64,7 +60,6 @@ SHEMA = {
     "адрес":  "строка, необязательно — где его искать (URL)",
     "числа":  "объект, необязательно — что мир хочет сказать о себе",
     "версия": "строка, необязательно — версия шасси, чтобы видеть расхождение",
-    "сводка": "строка, необязательно — отчёт мира (сканер), markdown",  # MAYAK_SVODKI_V1
 }
 
 
@@ -100,7 +95,6 @@ def proverit_pulse(d: dict) -> tuple:
         "адрес": str(d.get("адрес", "") or "")[:200],
         "числа": chisla,
         "версия": str(d.get("версия", "") or "")[:40],
-        "сводка": str(d.get("сводка", "") or "")[:SVODKA_MAX],  # MAYAK_SVODKI_V1
     }
 
 
@@ -150,8 +144,6 @@ def prinyat(dannye: dict, klyuch: str = "") -> dict:
             "первый_пульс": staroe.get("первый_пульс") or teper,
             "последний_пульс": teper,
             "пульсов": int(staroe.get("пульсов", 0)) + 1,
-            # MAYAK_SVODKI_V1: когда пришла последняя сводка мира
-            "сводка_когда": teper if p.get("сводка") else staroe.get("сводка_когда", ""),
         }
         kartochka_path.write_text(
             json.dumps(kartochka, ensure_ascii=False, indent=2),
@@ -160,11 +152,6 @@ def prinyat(dannye: dict, klyuch: str = "") -> dict:
             f.write(json.dumps({"когда": teper, "числа": p["числа"],
                                 "версия": p["версия"]},
                                ensure_ascii=False) + "\n")
-        # MAYAK_SVODKI_V1: сводка — рядом с карточкой, целиком заменяется
-        if p.get("сводка"):
-            _vr = dom / "сводка.md.tmp"
-            _vr.write_text(p["сводка"], encoding="utf-8")
-            os.replace(_vr, dom / "сводка.md")
     except Exception as e:
         return {"ok": False, "причина": f"не записалось: {e}", "id": p["id"]}
 
@@ -212,7 +199,7 @@ def kto_na_svyazi(molchit_chasov: float = 24.0) -> list:
 async def otpravit(kuda: str, id: str, imya: str, rod: str = "остров",
                    chisla: dict = None, versia: str = "",
                    adres: str = "", klyuch: str = "",
-                   timeout: float = 15.0, svodka: str = "") -> dict:
+                   timeout: float = 15.0) -> dict:
     """Шлёт пульс на материк. Зовётся С ОСТРОВА, из его собственного
     тика — материк никого не опрашивает (иначе он молчаливо становится
     начальником, и сеть равных не вырастет; решение 29.07).
@@ -227,8 +214,6 @@ async def otpravit(kuda: str, id: str, imya: str, rod: str = "остров",
     import httpx
     telo = {"id": id, "имя": imya, "род": rod,
             "числа": chisla or {}, "версия": versia, "адрес": adres}
-    if svodka:   # MAYAK_SVODKI_V1
-        telo["сводка"] = svodka
     zagolovki = {"Content-Type": "application/json"}
     kl = klyuch or PULSE_KEY
     if kl:
@@ -292,5 +277,3 @@ if __name__ == "__main__":
 
 
 # PRICHAL_V1 — маркер идемпотентности
-
-# MAYAK_SVODKI_V1 - marker

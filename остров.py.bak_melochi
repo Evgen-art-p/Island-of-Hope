@@ -148,15 +148,8 @@ def main() -> int:
     skazat("\n[3/4] главная страница")
     # ставим ВСЕГДА, а не только в первый раз: так поправленная главная
     # доезжает до тебя сама, без отдельных команд
-    # MELOCHI_28_09_V1: старый установщик главной больше не нужен —
-    # главная острова давно своя (ui_ostrov.py). Не пугаем зря.
-    if (KOREN / "postavit_glavnuyu.py").exists():
-        if not zapustit("postavit_glavnuyu.py", "--sdelat"):
-            skazat("  главная не встала — остров поднимется без неё")
-    elif (KOREN / "ui_ostrov.py").exists():
-        skazat("  главная на месте")
-    else:
-        skazat("  главной нет — остров поднимется без неё")
+    if not zapustit("postavit_glavnuyu.py", "--sdelat"):
+        skazat("  главная не встала — остров поднимется без неё")
     if (KOREN / "postavit_zastroyshchika.py").exists():
         if not zapustit("postavit_zastroyshchika.py", "--sdelat"):
             skazat("  застройщик не встал — остальное работает")
