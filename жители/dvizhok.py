@@ -25,9 +25,107 @@
 # `шесть·проверено·до·корня`
 # ─────────────────────────────────────────────────────────────
 import json
+import math   # STOL_RAZNOE_V1
+import re     # ARHIV_S_KLYUCHOM_V1
 from typing import Optional   # PYLANCE_GIGIENA_V1
 from pathlib import Path
 from datetime import datetime, timezone
+import os     # PAMYAT_BEZ_TISHINY_V1
+
+
+# ═══════════════════════════════════════════════════════
+# PAMYAT_BEZ_TISHINY_V1 (слово Шефа 17.10) — ПАМЯТЬ НЕ ТЕРЯЕТСЯ МОЛЧА
+# ═══════════════════════════════════════════════════════
+# Было три беды:
+#   1. сбой записи глотался молча (except: pass) — снаружи «всё хорошо»;
+#   2. файл, который не прочитался, считался ПУСТЫМ — и следующая
+#      запись ложилась поверх, стирая всю память (свежую, метки, маяки);
+#   3. файл писался прямо на место — оборвалась запись на середине,
+#      и файл битый (а дальше — беда №2).
+# Теперь: сбой — строкой в лог; битый файл перед перезаписью уходит
+# копией в _ЧУЛАН/память/<житель>/ (не сберёгся — не пишем поверх);
+# запись — сперва во временный файл, потом подмена одним шагом.
+# Дыхание по-прежнему не роняем: память не должна валить разговор.
+# ═══════════════════════════════════════════════════════
+
+_PREDUPREZHDENO = set()   # что уже сказано в лог — не повторять на каждом баре
+
+
+def _skazat(tekst: str, klyuch=None):
+    """Строка в лог. С ключом — один раз за запуск города."""
+    if klyuch is not None:
+        if klyuch in _PREDUPREZHDENO:
+            return
+        _PREDUPREZHDENO.add(klyuch)
+    try:
+        print(f"[ПАМЯТЬ] ⚠️  {tekst}")
+    except Exception:
+        pass
+
+
+def _atomarno(path, tekst: str):
+    """Записать файл целиком или никак: сперва рядом во временный,
+    потом подмена одним шагом. Оборвалось — старый файл цел.
+    Windows не даёт подменить файл, который в этот миг кто-то читает, —
+    тогда несколько коротких попыток, а в крайнем случае пишем прямо,
+    как раньше (не хуже прежнего)."""
+    import time as _time
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(tekst)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+    for _ in range(8):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            _time.sleep(0.05)
+    path.write_text(tekst, encoding="utf-8")
+    try:
+        tmp.unlink()
+    except Exception:
+        pass
+
+
+def _chulan_pamyati(dom) -> Path:
+    """_ЧУЛАН/память/<житель>/ в корне репо (там, где GRONDHEIM_CITY).
+    Корень не нашёлся — рядом с домом, в папке _сломанное."""
+    dom = Path(dom)
+    for up in dom.parents:
+        if (up / "GRONDHEIM_CITY").is_dir():
+            return up / "_ЧУЛАН" / "память" / dom.name
+    return dom / "_сломанное"
+
+
+def _v_chulan(dom, path, prichina) -> str:
+    """Копия битого файла — в чулан, ДО того как его перепишут.
+    Одна копия на одно состояние файла (по времени изменения), чтобы
+    повторные попытки не плодили дубли. Путь копии или "" — не вышло."""
+    path = Path(path)
+    try:
+        st = path.stat()
+    except Exception:
+        return ""
+    try:
+        papka = _chulan_pamyati(dom)
+        papka.mkdir(parents=True, exist_ok=True)
+        metka = datetime.fromtimestamp(st.st_mtime).strftime("%Y%m%d_%H%M%S")
+        kopiya = papka / f"{path.stem}__{metka}{path.suffix}"
+        if not kopiya.exists():
+            kopiya.write_bytes(path.read_bytes())
+            _skazat(f"{Path(dom).name}: {path.name} не читается ({prichina}) — "
+                    f"старое сбережено: {kopiya}")
+        return str(kopiya)
+    except Exception as e:
+        _skazat(f"{Path(dom).name}: {path.name} не читается, и сберечь "
+                f"не вышло ({e})")
+        return ""
 
 # PAMYAT_RABOTA_ZHIZN_V1: какой контекст считается РАБОТОЙ, а какой
 # ЖИЗНЬЮ. Нужно затем, что за столом житель просит опыт — и должен
@@ -69,6 +167,9 @@ OTKUDA_KONTEKST = {
     "факт": "факт",
     "учёба": "учёба", "учеба": "учёба",
     "общение": "общение", "дом": "дом", "жизнь": "дом",
+    # ARHIV_S_KLYUCHOM_V1: записи прогонов и выбор рабочего этажа —
+    # это работа. Раньше голос «прогон» контекста не имел.
+    "прогон": "работа", "решение": "работа",
 }
 
 
@@ -283,10 +384,19 @@ class Dvizhok:
                 if p.exists():
                     try:
                         data = json.loads(p.read_text(encoding="utf-8"))
-                    except Exception:
+                        if not isinstance(data, dict) or not isinstance(
+                                data.get("entries", []), list):
+                            raise ValueError("не тот вид файла")
+                    except Exception as _e_ch:
+                        # PAMYAT_BEZ_TISHINY_V1: было — молча начать с
+                        # пустого и записать ПОВЕРХ: вся свежая память
+                        # пропадала. Теперь старое — копией в чулан;
+                        # не сберёглось — поверх не пишем.
+                        if not _v_chulan(self.dom, p, _e_ch):
+                            return
                         data = {"entries": []}
                 data.setdefault("entries", []).append(zapis)
-                p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                _atomarno(p, json.dumps(data, ensure_ascii=False, indent=2))
             elif sloy == "resonance":
                 # event_log.jsonl — JSONL, дозапись строкой
                 (self.dom / "resonance").mkdir(parents=True, exist_ok=True)
@@ -299,8 +409,10 @@ class Dvizhok:
                 p = self.dom / "archive" / "archive.jsonl"
                 with open(p, "a", encoding="utf-8") as f:
                     f.write(json.dumps(zapis, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # память не должна ронять дыхание — пропускаем тихо
+        except Exception as _e_zap:
+            # PAMYAT_BEZ_TISHINY_V1: дыхание не роняем — но и не молчим
+            _skazat(f"{self.dom.name}: событие не записалось в {sloy} "
+                    f"({_e_zap})")
 
     def vydoh_stol(self, fakt: str, vdoh_result: dict) -> dict:
         """Выдох: накрывает СТОЛ для решения жителя. НЕ решает сам.
@@ -419,15 +531,37 @@ class Dvizhok:
         try:
             if path.exists():
                 d = json.loads(path.read_text(encoding="utf-8"))
-                return d if isinstance(d, list) else []
-        except Exception:
-            pass
+                if isinstance(d, list):
+                    return d
+                raise ValueError("не список")
+        except Exception as _e_et:
+            # PAMYAT_BEZ_TISHINY_V1: файл есть, а не читается — это не
+            # «пустой этаж», это беда. Говорим один раз на состояние
+            # файла; запись поверх остановит _pisat_etazh.
+            try:
+                _kl = (str(path), path.stat().st_mtime_ns)
+            except Exception:
+                _kl = (str(path), 0)
+            _skazat(f"{self.dom.name}: {Path(path).name} не читается "
+                    f"({_e_et}) — сейчас для жителя пуст", klyuch=_kl)
         return []
 
     def _pisat_etazh(self, path: Path, data: list):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
+        path = Path(path)
+        # PAMYAT_BEZ_TISHINY_V1: прежний файл не читался — значит житель
+        # работал с «пустым» этажом, и запись сотрёт всё нажитое. Сперва
+        # копия в чулан; не вышло — не пишем вовсе.
+        if path.exists():
+            try:
+                _staroe = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(_staroe, list):
+                    raise ValueError("не список")
+            except Exception as _e_st:
+                if not _v_chulan(self.dom, path, _e_st):
+                    _skazat(f"{self.dom.name}: {path.name} не перезаписан — "
+                            f"старое сберечь не вышло")
+                    return
+        _atomarno(path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def metki(self) -> list:
         """Весь второй этаж — нажитое. Список объектов."""
@@ -466,6 +600,39 @@ class Dvizhok:
             if y and y not in out:
                 out.append(y[:40])
         return out[:8]
+
+    # ARHIV_S_KLYUCHOM_V1: служебный мусор разбора и ТОЧНЫЙ дубль.
+    @staticmethod
+    def _chistyy_tekst(t) -> str:
+        """Служебное «ЯРКОЕ:» в начале и случайные иероглифы в конце —
+        мусор разбора ответа, не слова жителя."""
+        t = str(t or "").strip()
+        t = re.sub(r"^(?:[\s*_>#-]*ЯРКОЕ\s*[:：]\s*)+", "", t, flags=re.I)
+        t = re.sub(r"\s*[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+\s*$", "", t)
+        return t.strip()
+
+    @staticmethod
+    def _odin_tekst(t) -> str:
+        """Ключ ТОЧНОГО совпадения: те же слова в том же порядке.
+        Регистр, пробелы, знаки и мусор не считаются. Похожее, но
+        другими словами, — НЕ совпадение: его судит Шеф."""
+        t = Dvizhok._chistyy_tekst(t).lower().replace("ё", "е")
+        return " ".join(re.findall(r"[a-zа-я0-9_]+", t))
+
+    POVTOROV_HRANIT = 20
+
+    def _zapomnit_povtor(self, m: dict, otkuda: str = "", ot_kogo: str = "",
+                         kak: str = ""):
+        """Повтор не теряется и не плодит вторую метку: ложится историей
+        в первую — когда, откуда, от кого, как было сказано."""
+        z = {"когда": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        if (otkuda or "").strip():
+            z["откуда"] = otkuda.strip()
+        if (ot_kogo or "").strip():
+            z["от кого"] = ot_kogo.strip()[:40]
+        if kak and kak.strip() != str(m.get("текст") or "").strip():
+            z["как сказано"] = kak.strip()[:300]
+        m["повторы"] = (list(m.get("повторы") or []) + [z])[-self.POVTOROV_HRANIT:]
 
     def _prishit_klyuch(self, zapis: dict, yarlyki=None, ot_kogo: str = ""):
         """Дописать закладочную часть ключа в запись. ДОБАВЛЯЕТ ярлыки к
@@ -508,11 +675,186 @@ class Dvizhok:
         жизнь в голове. Но яркое (сам житель так решил, отдельной
         строкой в разговоре) не вымывается свежестью — держится своим
         флагом, а не местом в очереди."""
-        m = self.metki()
-        m.sort(key=lambda x: str(x.get("когда", "")))
-        yarkie = [x for x in m if x.get("ярко")][-self.YARKOE_V_STOL:]
-        svezhie = [x for x in m if not x.get("ярко")][-self.METKI_V_STOL:]
-        return yarkie + svezhie
+        # STOL_RAZNOE_V1 (30.09, слово Шефа): «стол — не вся память, а её
+        # выборка; качество стола в том, насколько полно он представляет
+        # опыт». Раньше 6 мест из 10 занимали шесть формулировок одного
+        # правила, а 3 — названия пар. Теперь метки делятся на ТЕМЫ по
+        # смыслу, и от каждой темы берётся один урок, свежайший; второй
+        # из той же темы — только если места остались. Сами метки не
+        # трогаются: всё лежит, как лежало, и достаётся по ключу.
+        try:
+            p = self._metki_path()
+            _st = p.stat() if p.exists() else None
+            _kl = (_st.st_mtime_ns, _st.st_size) if _st else None
+            if _kl is not None and getattr(self, "_stol_kesh", (None,))[0] == _kl:
+                return list(self._stol_kesh[1])
+            vybor = self._stol_raznoe(self.metki())
+            self._stol_kesh = (_kl, vybor)
+            return list(vybor)
+        except Exception:
+            m = self.metki()
+            m.sort(key=lambda x: str(x.get("когда", "")))
+            yarkie = [x for x in m if x.get("ярко")][-self.YARKOE_V_STOL:]
+            svezhie = [x for x in m if not x.get("ярко")][-self.METKI_V_STOL:]
+            return yarkie + svezhie
+
+    GOROD_V_STOL = 2        # записей города (прогонов) на столе — не больше
+    TEMA_POROG = 0.35       # насколько общий смысл делает метки одной темой
+
+    @staticmethod
+    def _slova_uroka(t) -> set:
+        t = str(t or "").lower().replace("ё", "е")
+        return {w[:5] for w in re.findall(r"[a-zа-я0-9_]+", t) if len(w) >= 4}
+
+    def _stol_raznoe(self, metki: list) -> list:
+        """Выборка на стол: разные темы, свежие первыми. Ничего не
+        склеивает и не удаляет — только выбирает, что положить."""
+        m = [x for x in metki if isinstance(x, dict)
+             and x.get("паттерн") != "рабочий_этаж"      # название пары — не урок
+             and str(x.get("текст") or "").strip()]
+        if not m:
+            return []
+        m.sort(key=lambda x: str(x.get("когда", ""))[:19], reverse=True)
+        # VYSELENIE_PO_TEMAM_V1: темы считает одно правило — и для стола,
+        # и для выселения.
+        S, pohozhest, _grupy = self._razbit_na_temy(m)
+        gorod = [x.get("откуда") == "прогон" for x in m]
+        poryadok = sorted(_grupy, key=lambda t: t[0])  # тема — по свежайшей
+
+        mest = self.YARKOE_V_STOL + self.METKI_V_STOL
+        vzyato, gor = [], 0
+
+        def mozhno(i):
+            return not (gorod[i] and gor >= self.GOROD_V_STOL)
+
+        for t in poryadok:                   # круг 1: по уроку от каждой темы
+            if len(vzyato) >= mest:
+                break
+            i = t[0]
+            if mozhno(i):
+                vzyato.append(i)
+                gor += gorod[i]
+        for t in poryadok:                   # круг 2: вторые — самые непохожие
+            if len(vzyato) >= mest:
+                break
+            ostalis = [i for i in t if i not in vzyato and mozhno(i)]
+            if not ostalis:
+                continue
+            i = min(ostalis, key=lambda k: max(pohozhest(S[k], S[j]) for j in vzyato))
+            vzyato.append(i)
+            gor += gorod[i]
+        return [m[i] for i in sorted(vzyato, key=lambda k: str(m[k].get("когда", ""))[:19])]
+
+    # ═══════════════════════════════════════════════════════
+    # VYSELENIE_PO_TEMAM_V1 (слово Шефа 30.09) — КОГО ВЫСЕЛЯТЬ
+    # ═══════════════════════════════════════════════════════
+    # Выселение стояло в четырёх местах, и в каждом своё правило. На
+    # пробе ушёл единственный урок «три условия», а шесть формулировок
+    # «края» остались. Теперь правило одно:
+    #   1. запись выбора рабочей пары — не урок: последняя остаётся;
+    #   2. повтор из самой большой темы — старшая формулировка; слово
+    #      живого учителя не трогаем, уходит её собственный пересказ;
+    #   3. единственный урок своей темы — не уходит, пока есть 1–2;
+    #   4. выбора нет — самая старая (сперва не-яркие), как было.
+    # Только что записанное не выселяется. Ушедшее — в архив с ключами.
+    # ═══════════════════════════════════════════════════════
+
+    def _razbit_na_temy(self, m: list):
+        """Темы меток по смыслу. m — список меток (порядок любой).
+        Возвращает (слова, мера похожести, группы индексов в m).
+        Записи города делятся по своей ловушке, не по словам."""
+        n = len(m)
+        S = [self._slova_uroka(x.get("текст")) for x in m]
+        df = {}
+        for s in S:
+            for w in s:
+                df[w] = df.get(w, 0) + 1
+        idf = {w: math.log((n + 1) / c) for w, c in df.items()}
+
+        def pohozhest(a, b):
+            if not a or not b:
+                return 0.0
+            obshchee = sum(idf[w] for w in a & b)
+            return obshchee / max(1e-9, min(sum(idf[w] for w in a),
+                                             sum(idf[w] for w in b)))
+
+        gorod = [x.get("откуда") == "прогон" for x in m]
+        roditel = list(range(n))
+
+        def koren(i):
+            while roditel[i] != i:
+                roditel[i] = roditel[roditel[i]]
+                i = roditel[i]
+            return i
+        for i in range(n):
+            for j in range(i + 1, n):
+                if gorod[i] or gorod[j]:
+                    odna = (gorod[i] and gorod[j]
+                            and m[i].get("паттерн") == m[j].get("паттерн"))
+                else:
+                    odna = pohozhest(S[i], S[j]) >= self.TEMA_POROG
+                if odna:
+                    roditel[koren(i)] = koren(j)
+        temy = {}
+        for i in range(n):
+            temy.setdefault(koren(i), []).append(i)
+        return S, pohozhest, list(temy.values())
+
+    _NE_UCHITEL = ("", "город", "рынок")
+
+    def _slovo_uchitelya(self, x: dict) -> bool:
+        """Слово живого учителя: поправка учителя или «от кого» — человек
+        (Шеф, Ректор…), а не город и не рынок."""
+        if x.get("откуда") == "учитель":
+            return True
+        return str(x.get("от кого") or "").strip().lower() not in self._NE_UCHITEL
+
+    def _kogo_vyselit(self, metki: list, novaya=None):
+        """Одна метка на выселение по правилу выше. Нечего — None."""
+        def kogda(x):
+            return str(x.get("когда") or x.get("первый_раз") or "")[:19]
+        kand = [x for x in metki if isinstance(x, dict) and x is not novaya]
+        if not kand:
+            return None
+        # 1. записи выбора пары — последняя остаётся
+        etazhi = sorted((x for x in metki if isinstance(x, dict)
+                         and x.get("паттерн") == "рабочий_этаж"), key=kogda)
+        if len(etazhi) > 1 and etazhi[0] is not novaya:
+            return etazhi[0]
+        # 2. повтор из самой большой темы
+        uroki = sorted((x for x in metki if isinstance(x, dict)
+                        and x.get("паттерн") != "рабочий_этаж"
+                        and str(x.get("текст") or "").strip()),
+                       key=kogda, reverse=True)
+        if len(uroki) > 1:
+            try:
+                _S, _p, grupy = self._razbit_na_temy(uroki)
+                grupy = [[uroki[i] for i in g] for g in grupy if len(g) >= 2]
+                grupy.sort(key=lambda g: (-len(g), min(kogda(x) for x in g)))
+                for g in grupy:
+                    mozhno = [x for x in g if x is not novaya
+                              and not self._slovo_uchitelya(x)]
+                    if mozhno:
+                        return min(mozhno, key=kogda)
+            except Exception:
+                pass
+        # 4. выбора нет — самая старая, сперва не-яркие
+        ne_yarkie = [x for x in kand if not x.get("ярко")]
+        return min(ne_yarkie or kand, key=kogda)
+
+    def _vyselit_lishnie(self, metki: list, novaya=None) -> tuple:
+        """Пока меток больше METKI_CAP — выселяет по одной (правило выше),
+        ушедшее кладёт в архив с ключами. Возвращает (остались, ушли)."""
+        metki = list(metki)
+        ushli = []
+        while len(metki) > self.METKI_CAP:
+            zhertva = self._kogo_vyselit(metki, novaya)
+            if zhertva is None:
+                break
+            metki = [x for x in metki if x is not zhertva]
+            ushli.append(zhertva)
+            self._archive_zapis(zhertva, "метка вытеснена (лимит нажитого)")
+        return metki, ushli
 
     # ═══════════════════════════════════════════════════════
     # YARKOE_V1 — ЖИТЕЛЬ САМ РЕШАЕТ, ЧТО ДЕРЖИТСЯ ДОЛЬШЕ
@@ -528,20 +870,24 @@ class Dvizhok:
         # METKA_KAK_KLYUCH_V1: сюда же вешается закладочная часть ключа.
         # Даже если метка уже была яркой — ярлык и имя дописываем: это
         # не повтор знания, это уточнение ключа к нему.
-        tekst = (tekst or "").strip()
+        _skazano = (tekst or "").strip()
+        tekst = self._chistyy_tekst(_skazano)   # ARHIV_S_KLYUCHOM_V1: без «ЯРКОЕ:»
         if not tekst:
             return {"дописано": False, "причина": "пустой текст"}
         metki = self.metki()
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _tot_zhe = self._odin_tekst(tekst)
         for m in metki:
-            if m.get("текст") == tekst:
+            if self._odin_tekst(m.get("текст")) == _tot_zhe:
                 _bylo_yarkim = bool(m.get("ярко"))
                 self._prishit_klyuch(m, yarlyki, ot_kogo)
+                self._zapomnit_povtor(m, otkuda, ot_kogo, _skazano)   # ARHIV_S_KLYUCHOM_V1
                 if _bylo_yarkim:
+                    self._pisat_etazh(self._metki_path(), metki)
                     if yarlyki or ot_kogo:
-                        self._pisat_etazh(self._metki_path(), metki)
                         return {"дописано": True, "причина": "ключ уточнён"}
-                    return {"дописано": False, "причина": "уже отмечено ярким"}
+                    return {"дописано": False,
+                            "причина": "уже отмечено ярким — повтор записан"}
                 m["ярко"] = True
                 self._pisat_etazh(self._metki_path(), metki)
                 return {"дописано": True, "причина": "было меткой, стало яркой"}
@@ -549,19 +895,8 @@ class Dvizhok:
                    "когда": now_iso, "раз": 1, "ярко": True}
         self._prishit_klyuch(_novaya, yarlyki, ot_kogo)
         metki.append(_novaya)
-        ushlo = []
-        # яркие не подставляем под обычное вытеснение по лимиту —
-        # выселяем только НЕ-яркие, старейшие сначала
-        if len(metki) > self.METKI_CAP:
-            ne_yarkie_idx = [i for i, x in enumerate(metki) if not x.get("ярко")]
-            izbytok = len(metki) - self.METKI_CAP
-            vyselit = {id(metki[i]) for i in ne_yarkie_idx[:izbytok]}
-            if vyselit:
-                ushlo = [x for x in metki if id(x) in vyselit]
-                metki = [x for x in metki if id(x) not in vyselit]
-                for old in ushlo:
-                    self._archive_zapis(old.get("текст", ""),
-                                        "метка вытеснена (лимит нажитого)")
+        # VYSELENIE_PO_TEMAM_V1: одно правило выселения на все пути
+        metki, ushlo = self._vyselit_lishnie(metki, _novaya)
         self._pisat_etazh(self._metki_path(), metki)
         return {"дописано": True, "меток": len(metki), "вытеснено": len(ushlo)}
 
@@ -581,22 +916,47 @@ class Dvizhok:
     OPROVERZHENIY_DO_GASHENIYA = 3   # закрытых в минус — маяк гаснет
     OPROVERZHENIY_DO_PADENIYA = 3    # столько же — и МЕТКА падает обратно
 
-    def _archive_zapis(self, fakt: str, prichina: str):
+    # ARHIV_S_KLYUCHOM_V1 (30.09, слово Шефа): «вытеснение с рабочего
+    # стола не должно означать потерю ключей и происхождения метки».
+    # Раньше в архив уходил голый текст: без ключей, без «от кого», без
+    # голоса — и по слою архив считался «учёбой». По ключу такую метку
+    # было уже не найти. Теперь запись уносит всё, чем её находят.
+    _ARHIV_NESTI = ("откуда", "от кого", "ярлыки", "паттерн", "ярко",
+                    "подтверждений", "опровержений", "повторы")
+
+    def _archive_zapis(self, fakt, prichina: str):
         """Общий писчик в archive.jsonl — и вытесненные якоря, и
-        вытесненные черновики уходят сюда, не в забвение."""
+        вытесненные черновики уходят сюда, не в забвение.
+        fakt — строка или САМА метка (dict): тогда с ней уходят ключи,
+        голос, «от кого» и время рождения."""
+        metka = fakt if isinstance(fakt, dict) else None
+        if metka is not None:
+            fakt = metka.get("текст", "")
         try:
             (self.dom / "archive").mkdir(parents=True, exist_ok=True)
             ap = self.dom / "archive" / "archive.jsonl"
+            zapis = {
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "слой": "archive",
+                "факт": fakt,
+                "причина": prichina,
+            }
+            if metka is not None:
+                for _k in self._ARHIV_NESTI:
+                    if metka.get(_k) not in (None, "", [], {}):
+                        zapis[_k] = metka[_k]
+                if metka.get("когда") or metka.get("первый_раз"):
+                    zapis["было_с"] = metka.get("когда") or metka.get("первый_раз")
+                _kont = (str(metka.get("контекст") or "").strip()
+                         or OTKUDA_KONTEKST.get(
+                             str(metka.get("откуда") or "").strip().lower(), ""))
+                if _kont:
+                    zapis["контекст"] = _kont
             with open(ap, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "ts": datetime.now(timezone.utc)
-                          .isoformat(timespec="seconds"),
-                    "слой": "archive",
-                    "факт": fakt,
-                    "причина": prichina,
-                }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass   # архив не должен ронять запись опыта
+                f.write(json.dumps(zapis, ensure_ascii=False) + "\n")
+        except Exception as _e_arh:
+            # PAMYAT_BEZ_TISHINY_V1: запись опыта не роняем — но и не молчим
+            _skazat(f"{self.dom.name}: в архив не легло ({prichina}): {_e_arh}")
 
     def dopisat_vyvod(self, vyvod: str, limit: int = 10,
                       pattern: Optional[str] = None,   # PYLANCE_GIGIENA_V1
@@ -629,7 +989,8 @@ class Dvizhok:
         limit — legacy-параметр, оставлен для совместимости вызовов
         (nositel.py передаёт limit=10). Метки живут по METKI_CAP.
         """
-        vyvod = (vyvod or "").strip()
+        _skazano = (vyvod or "").strip()
+        vyvod = self._chistyy_tekst(_skazano)   # ARHIV_S_KLYUCHOM_V1
         if not vyvod:
             return {"дописано": False, "причина": "пустой вывод"}
 
@@ -637,12 +998,25 @@ class Dvizhok:
         mayaki = self.mayaki()
         now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        # дубль текста — ни в одном этаже не плодим
-        if any(m.get("текст") == vyvod for m in metki):
-            return {"дописано": False, "причина": "уже среди меток",
+        # дубль текста — ни в одном этаже не плодим.
+        # ARHIV_S_KLYUCHOM_V1: «точный» — те же слова в том же порядке;
+        # повтор при этом не теряется, а ложится историей в первую запись.
+        _tot_zhe = self._odin_tekst(vyvod)
+        _dubl = next((m for m in metki
+                      if self._odin_tekst(m.get("текст")) == _tot_zhe), None)
+        if _dubl is not None:
+            self._prishit_klyuch(_dubl, yarlyki, ot_kogo)
+            self._zapomnit_povtor(_dubl, otkuda, ot_kogo, _skazano)
+            self._pisat_etazh(self._metki_path(), metki)
+            return {"дописано": False, "причина": "уже среди меток — повтор записан",
                     "меток": len(metki)}
-        if any(m.get("текст") == vyvod for m in mayaki):
-            return {"дописано": False, "причина": "уже среди маяков",
+        _dubl = next((m for m in mayaki
+                      if self._odin_tekst(m.get("текст")) == _tot_zhe), None)
+        if _dubl is not None:
+            self._prishit_klyuch(_dubl, yarlyki, ot_kogo)
+            self._zapomnit_povtor(_dubl, otkuda, ot_kogo, _skazano)
+            self._pisat_etazh(self._mayaki_path(), mayaki)
+            return {"дописано": False, "причина": "уже среди маяков — повтор записан",
                     "маяков": len(mayaki)}
 
         # РОД тоже сверяем: если житель «вывел» то, что и так его натура —
@@ -656,13 +1030,9 @@ class Dvizhok:
                   "когда": now_iso, "раз": raz}
             self._prishit_klyuch(_m, yarlyki, ot_kogo)   # METKA_KAK_KLYUCH_V1
             metki.append(_m)
-            ushlo = []
-            if len(metki) > self.METKI_CAP:
-                ushlo = metki[:len(metki) - self.METKI_CAP]
-                del metki[:len(metki) - self.METKI_CAP]
-                for old in ushlo:
-                    self._archive_zapis(old.get("текст", ""),
-                                        "метка вытеснена (лимит нажитого)")
+            # VYSELENIE_PO_TEMAM_V1: одно правило выселения на все пути
+            _ost, ushlo = self._vyselit_lishnie(metki, _m)
+            metki[:] = _ost
             return ushlo
 
         # ── ЯРУС 1: без ключа — сразу в метки ───────────────────
@@ -723,7 +1093,7 @@ class Dvizhok:
             mayaki = mayaki[len(mayaki) - self.DRAFT_CAP:]
             for d in pogaslo:
                 self._archive_zapis(
-                    d.get("текст", ""),
+                    d,
                     f"маяк погас, не набрал повтора ({d.get('раз', 1)}/"
                     f"{self.PROMOTE_THRESHOLD})")
 
@@ -791,11 +1161,8 @@ class Dvizhok:
                     "раз": m.get("раз", 1),
                     "подтверждений": za, "опровержений": protiv,
                 })
-                if len(metki) > self.METKI_CAP:
-                    for old in metki[:len(metki) - self.METKI_CAP]:
-                        self._archive_zapis(old.get("текст", ""),
-                                            "метка вытеснена (лимит нажитого)")
-                    del metki[:len(metki) - self.METKI_CAP]
+                # VYSELENIE_PO_TEMAM_V1: одно правило выселения на все пути
+                metki, _ushli = self._vyselit_lishnie(metki, metki[-1])
                 self._pisat_etazh(self._metki_path(), metki)
                 self._pisat_etazh(self._mayaki_path(), mayaki)
                 return {"учтено": True, "исход": "маяк стал меткой",
@@ -804,7 +1171,7 @@ class Dvizhok:
             if protiv >= self.OPROVERZHENIY_DO_GASHENIYA and protiv > za:
                 mayaki = [x for x in mayaki if x is not m]
                 self._archive_zapis(
-                    m.get("текст", ""),
+                    m,
                     f"рынок опроверг маяк ({protiv} против {za}) {fakt}".strip())
                 self._pisat_etazh(self._mayaki_path(), mayaki)
                 return {"учтено": True, "исход": "маяк погашен рынком",
@@ -835,7 +1202,7 @@ class Dvizhok:
                     "падала": True,
                 })
                 self._archive_zapis(
-                    mt.get("текст", ""),
+                    mt,
                     f"метка упала обратно в маяки: рынок опроверг "
                     f"({protiv} против {za}) {fakt}".strip())
                 self._pisat_etazh(self._metki_path(), metki)
@@ -884,7 +1251,7 @@ class Dvizhok:
         if pattern:
             byvshie = [m for m in metki if m.get("паттерн") == pattern]
             for b in byvshie:
-                self._archive_zapis(b.get("текст", ""),
+                self._archive_zapis(b,
                                     "заменено новой поправкой учителя")
             metki = [m for m in metki if m.get("паттерн") != pattern]
 
@@ -899,11 +1266,8 @@ class Dvizhok:
             # учителя трейдеру по определению рабочее знание.
             "контекст": "работа",
         })
-        if len(metki) > self.METKI_CAP:
-            for old in metki[:len(metki) - self.METKI_CAP]:
-                self._archive_zapis(old.get("текст", ""),
-                                    "метка вытеснена (лимит нажитого)")
-            del metki[:len(metki) - self.METKI_CAP]
+        # VYSELENIE_PO_TEMAM_V1: одно правило выселения на все пути
+        metki, _ushli = self._vyselit_lishnie(metki, metki[-1])
         self._pisat_etazh(self._metki_path(), metki)
         return {"легло": True, "этаж": "метки", "паттерн": pattern}
 
@@ -913,7 +1277,8 @@ class Dvizhok:
 
     ZNANIE_OTKUDA = ("учёба", "учеба", "учитель")
 
-    def pamyat_v_promt(self, metok: int = 14, chernovikov: int = 8) -> str:
+    def pamyat_v_promt(self, metok: int = 14, chernovikov: int = 8,
+                       rabota: bool = False, klyuchi: bool = False) -> str:  # RABOTA_V_PAMYATI_V1
         """Нажитое — текстом для системного промпта. Пусто — пустая строка.
 
         До этого метода вся трёхэтажная память работала ТОЛЬКО НА
@@ -940,14 +1305,17 @@ class Dvizhok:
         chernoviki = [_tekst(m) for m in mayaki
                       if m.get("откуда") in self.ZNANIE_OTKUDA and _tekst(m)]
         o_sebe = [_tekst(m) for m in metki
-                  if m.get("откуда") not in self.ZNANIE_OTKUDA and _tekst(m)]
+                  if m.get("откуда") not in self.ZNANIE_OTKUDA and _tekst(m)
+                  # RABOTA_V_PAMYATI_V1: рабочее — в блок работы, не в «о себе»
+                  and not (rabota and self._metka_rabochaya(m))]
+        rab_blok = self.rabota_v_promt(klyuchi=klyuchi) if rabota else ""
 
         znanie = znanie[-metok:]
         chernoviki = chernoviki[-chernovikov:]
         o_sebe = o_sebe[-metok:]
 
         if not (znanie or chernoviki or o_sebe):
-            return ""
+            return rab_blok   # RABOTA_V_PAMYATI_V1
 
         s = "\n=== ЧТО У ТЕБЯ УЖЕ НАЖИТО ===\n"
         if znanie:
@@ -964,6 +1332,122 @@ class Dvizhok:
         s += ("\nЭто твоя память — говори из неё своими словами. Чего здесь "
               "нет, того ты не знаешь: так и скажи честно, не придумывай. "
               "Не перечисляй этот список вслух, просто помни.\n")
+        return rab_blok + s   # RABOTA_V_PAMYATI_V1
+
+    # ═══════════════════════════════════════════════════════
+    # RABOTA_V_PAMYATI_V1 (слово Шефа 30.09) — РАБОТА В ПАМЯТИ
+    # ═══════════════════════════════════════════════════════
+    # «Не только помнить, что где-то работает, но и что там было —
+    # иначе декорация.» Кладём коротко: где, итоги прогонов с ключами,
+    # свои рабочие уроки. Подробности — по ключу: «таскать метки проще,
+    # чем всю память: спросил, проверил ключ, получил».
+    RABOCHIE_OTKUDA = ("работа", "рынок", "сделка", "прогон", "решение")
+    REDKOST_SLOVOM = {"Common": "Обычный", "Rare": "Редкий",
+                      "Epic": "Легендарный", "Mythic": "Единственный"}
+
+    def _metka_rabochaya(self, m: dict) -> bool:
+        return (m.get("откуда") in self.RABOCHIE_OTKUDA
+                or m.get("паттерн") == "рабочий_этаж")
+
+    def _imya_lokacii(self, lid: str) -> str:
+        """Имя места по его id — из паспорта локации. Нет — сам id."""
+        if not lid:
+            return ""
+        try:
+            pp = self.dom.parent.parent.parent / "локации" / lid / "passport.json"
+            if pp.exists():
+                return (json.loads(pp.read_text(encoding="utf-8"))
+                        .get("Official_Name") or lid)
+        except Exception:
+            pass
+        return lid
+
+    def rabota_v_promt(self, progonov: int = 5, urokov: int = 8,
+                       klyuchi: bool = False) -> str:
+        """Работа словами, для разговора. klyuchi=True — у итогов видны
+        ключи прогонов и подсказка, как поднять подробности (там, где
+        разговор умеет MEMORY_REQUEST)."""
+        try:
+            p = json.loads(self.passport_path.read_text(encoding="utf-8"))
+        except Exception:
+            p = self.p
+        s = "\n=== ТЫ В ГОРОДЕ ===\n"
+        r = str(p.get("Rarity") or "").strip()
+        if r:
+            s += f"Твоя редкость: {r} («{self.REDKOST_SLOVOM.get(r, r)}»).\n"
+        lid = str(p.get("прописка") or "").strip()
+        if lid:
+            s += f"Живёшь: {self._imya_lokacii(lid)}.\n"
+
+        s += "\n=== ТВОЯ РАБОТА ===\n"
+        rab = p.get("Работа") or {}
+        if not isinstance(rab, dict) or not rab:
+            return s + "Постоянной работы у тебя сейчас нет.\n"
+        dolzh = str(rab.get("должность") or "").strip() or "без названия"
+        gde = str(rab.get("где") or "").strip()
+        s_dnya = str(rab.get("с") or "")[:10]
+        if len(s_dnya) == 10 and s_dnya[4] == "-":
+            s_dnya = f"{s_dnya[8:10]}.{s_dnya[5:7]}"
+        s += (f"Ты работаешь: {dolzh}" + (f" — {gde}" if gde else "")
+              + (f", с {s_dnya}" if s_dnya else "") + ".\n")
+
+        try:
+            metki = self.metki() or []
+        except Exception:
+            metki = []
+        etazhi = sorted((m for m in metki if m.get("паттерн") == "рабочий_этаж"
+                         and str(m.get("текст") or "").strip()),
+                        key=lambda x: str(x.get("когда", "")))
+        if etazhi:
+            s += f"Последний рабочий этаж: {etazhi[-1]['текст']}.\n"
+
+        itogi = []
+        try:
+            pr = self.dom / "работа" / "работа.jsonl"
+            if pr.exists():
+                for ln in pr.read_text(encoding="utf-8").splitlines():
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        z = json.loads(ln)
+                    except Exception:
+                        continue
+                    if str(z.get("факт") or "").startswith("Прогон"):
+                        itogi.append(z)
+        except Exception:
+            pass
+        if itogi:
+            s += (f"\nЧто было на работе — итоги прогонов (всего в журнале "
+                  f"{len(itogi)}, последние сверху):\n")
+            for z in reversed(itogi[-progonov:]):
+                d = str(z.get("ts") or "")[:10]
+                if len(d) == 10:
+                    d = f"{d[8:10]}.{d[5:7]}"
+                f = str(z.get("факт") or "").replace("Прогон по истории ", "", 1)
+                kl = str(z.get("прогон") or "").strip()
+                s += f"— {d} · {f}"
+                if klyuchi and kl:
+                    s += f" ⟨ключ: прогон {kl}⟩"
+                s += "\n"
+        else:
+            s += "\nРабочего журнала пока нет — итогов работы не записано.\n"
+
+        uroki = sorted((m for m in metki if self._metka_rabochaya(m)
+                        and m.get("паттерн") != "рабочий_этаж"
+                        and str(m.get("текст") or "").strip()),
+                       key=lambda x: str(x.get("когда", "")))[-urokov:]
+        if uroki:
+            s += "\nЧто ты вынес(ла) с работы:\n"
+            s += "".join(f"• {str(m.get('текст')).strip()}\n" for m in uroki)
+
+        s += "\nЭто твоя работа, ты помнишь её сама — говори из этого своими словами.\n"
+        if klyuchi and itogi:
+            s += ("Нужны подробности прогона (сделки, входы, выходы) — напиши "
+                  "отдельной строкой MEMORY_REQUEST: прогон <ключ>, и они "
+                  "поднимутся. Остальное не выдумывай.\n")
+        else:
+            s += "Подробностей сверх этого не выдумывай — скажи, что помнишь в общих чертах.\n"
         return s
 
     def zhdut_verdikta(self) -> list:
@@ -1084,6 +1568,17 @@ class Dvizhok:
         # PAMYAT_RABOTA_ZHIZN_V1: о чём спрашиваем — о работе или о
         # жизни. За столом нужна практика, а не разговоры; дома —
         # наоборот. Пусто — ищем везде, как раньше.
+        # RABOTA_V_PAMYATI_V1: спросили по ключу прогона — отдаём
+        # ровно этот прогон, а не всё, где встретились слова.
+        import re as _re_kl
+        _kl = _re_kl.search(r"\d{8}_\d{6}", zapros or "")
+        _klyuch = _kl.group(0) if _kl else ""
+        if _klyuch:
+            _po_kl = [z for z in zapisi
+                      if str(z.get("прогон") or "") == _klyuch]
+            if _po_kl:
+                zapisi = _po_kl
+                limit = max(limit, 25)
         nuzhno = (o_chyom or "").strip().lower()
         naydeno = []
         for z in zapisi:
@@ -1110,6 +1605,8 @@ class Dvizhok:
             # vspomnit(), хотя реально лежал на диске.
             fakt = str(z.get("текст") or z.get("факт") or "").lower()
             score = sum(1 for w in slova if w in fakt)
+            if _klyuch and str(z.get("прогон") or "") == _klyuch:
+                score += self.YARLYK_VES   # RABOTA_V_PAMYATI_V1
             # METKA_KAK_KLYUCH_V1: попадание по ЗАКЛАДКЕ весит как пять
             # слов. Поиск тут буквальный, по словам, и потому слепой к
             # синонимам: «дивергенция» не находит «диверы». Ярлык — это
@@ -1130,6 +1627,8 @@ class Dvizhok:
                 score += 2   # PAMYAT_ISKRA_V1: тон совпал — весит как два слова
             if score > 0 and _blizhe:
                 score += 1          # SKVOZNAYA_PAMYAT_V1: ближнее к месту выше
+            if score > 0 and z.get("отменено"):
+                score = max(1, score - 2)   # POPRAVLENO_V1: поправка — выше отменённого
             if score > 0:
                 # VSPOMNIT_METKI_POLYA_V1: та же история со временем —
                 # метки/маяки пишут "когда", не "ts".
@@ -1164,6 +1663,9 @@ class Dvizhok:
             _ot = str(z.get("от кого") or "").strip()
             if _ot:
                 _hvost += f" · от: {_ot}"
+            # POPRAVLENO_V1: отменённое правило не выдаёт себя за действующее
+            if z.get("отменено"):
+                _hvost += f" · ⚠ ОТМЕНЕНО: {z.get('отменено')}"
             # SKVOZNAYA_PAMYAT_V1: вспоминается след, а не страница книги —
             # длинное (вставленная глава, весь ответ) режем до сути.
             _t = str(z.get('текст') or z.get('факт') or '')
@@ -1238,8 +1740,7 @@ class Dvizhok:
                     return
                 entries[-1]["факт"] = (entries[-1].get("факт", "")
                                        + f"\nЯ ответил(а): {otvet}")
-                p.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                            encoding="utf-8")
+                _atomarno(p, json.dumps(data, ensure_ascii=False, indent=2))   # PAMYAT_BEZ_TISHINY_V1
             elif sloy in ("resonance", "archive"):
                 rel = ("resonance/event_log.jsonl" if sloy == "resonance"
                       else "archive/archive.jsonl")
@@ -1255,9 +1756,11 @@ class Dvizhok:
                     return
                 posl["факт"] = posl.get("факт", "") + f"\nЯ ответил(а): {otvet}"
                 lines[-1] = json.dumps(posl, ensure_ascii=False)
-                p.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        except Exception:
-            pass
+                _atomarno(p, "\n".join(lines) + "\n")   # PAMYAT_BEZ_TISHINY_V1
+        except Exception as _e_dop:
+            # PAMYAT_BEZ_TISHINY_V1: разговор не роняем — но и не молчим
+            _skazat(f"{self.dom.name}: ответ не дописался к памяти "
+                    f"({sloy}): {_e_dop}")
 
     # ═══════════════════════════════════════════════════════
     # PROSEV_ZHIZNENNYI_V1 (27.07, слово Шефа) — просев личного
@@ -1380,8 +1883,9 @@ class Dvizhok:
             if k in self.p:
                 svezhiy[k] = self.p[k]
         self.p = svezhiy
-        self.passport_path.write_text(
-            json.dumps(svezhiy, ensure_ascii=False, indent=2), encoding="utf-8")
+        # PAMYAT_BEZ_TISHINY_V1: оборванный паспорт — житель не встанет
+        _atomarno(self.passport_path,
+                  json.dumps(svezhiy, ensure_ascii=False, indent=2))
 
 # PAMYAT_RABOTA_ZHIZN_V1 - marker
 
@@ -1392,3 +1896,395 @@ class Dvizhok:
 # YARKOE_V1 - marker
 
 # METKA_KAK_KLYUCH_V1 - marker
+
+# RABOTA_V_PAMYATI_V1 - marker
+
+# ARHIV_S_KLYUCHOM_V1 - marker
+# STOL_RAZNOE_V1 - marker
+
+# POPRAVLENO_V1 - marker
+
+# VYSELENIE_PO_TEMAM_V1 - marker
+
+
+# ══ TRI_POLKI_V1 — одна память, три полки: знания, доп. знания, опыт ══
+# Слово Шефа 24.10. Записи не переезжают и не дублируются: полка — это пометка,
+# по которой их видно. Явная пометка «полка» в записи — главнее правила.
+POLKI = ("знания", "доп. знания", "опыт")
+_ZNANIE_OT = ("учёба", "учеба", "учитель")
+_OPYT_OT = ("рынок", "сделка", "работа", "прогон", "решение", "факт",
+            "жизнь", "сам", "общение", "дом", "")
+_SLOVA_BIRZHI = ("рын", "бирж", "сделк", "трейд", "ao", "ао ", "дивер", "фрактал",
+                 "аллигатор", "волн", "стоп", "вход", "откат", "свеч", "разворот",
+                 "присед", "mfi", "торгов", "финанс", "цен", "тренд", "этаж", "пятая",
+                 "третья", "горб", "яма")
+_KL_OPYTA = {"откат": "сделки против старшего хода",
+             "по ходу": "сделки по старшему ходу",
+             "перезаход": "вход в тот же ход вскоре после среза",
+             "срез": "сделки, закрытые рукой без плюса",
+             "стоп": "сделки, кончившиеся стопом"}
+
+
+def _delo_birzha(self) -> bool:
+    try:
+        rab = self.p.get("Работа") or {}
+        t = (str(rab.get("где") or "") + " " + str(rab.get("должность") or "")).lower()
+        return "бирж" in t or "трейд" in t
+    except Exception:
+        return False
+
+
+def polka_zapisi(self, z: dict) -> str:
+    p = str(z.get("полка") or "").strip().lower()
+    if p in POLKI:
+        return p
+    otk = str(z.get("откуда") or "").strip().lower()
+    if otk in _ZNANIE_OT:
+        if self._delo_birzha():
+            t = (str(z.get("текст") or z.get("факт") or "") + " "
+                 + " ".join(self._yarlyki_spisok(z.get("ярлыки")))).lower()
+            return "знания" if any(w in t for w in _SLOVA_BIRZHI) else "доп. знания"
+        return "знания"
+    if otk in _OPYT_OT:
+        return "опыт"
+    return "доп. знания"
+
+
+def _opyt_treydera(self) -> list:
+    out = []
+    for f in (self.dom / "опыт" / "трейдер.jsonl", self.dom / "работа" / "опыт_стола.jsonl"):
+        try:
+            if f.is_file():
+                for ln in f.read_text(encoding="utf-8").splitlines():
+                    ln = ln.strip()
+                    if ln:
+                        try:
+                            out.append(json.loads(ln))
+                        except Exception:
+                            pass
+                break
+        except Exception:
+            pass
+    return out
+
+
+def _otbor_opyta(rr, k):
+    if k in ("откат", "по ходу"):
+        return [r for r in rr if r.get("место") == k]
+    if k == "перезаход":
+        return [r for r in rr if r.get("перезаход")]
+    if k == "срез":
+        return [r for r in rr if r.get("действие") in ("срез рукой", "срезала рукой")]
+    if k == "стоп":
+        return [r for r in rr if str(r.get("действие") or "").startswith(("до стопа", "держала до", "стоп"))]
+    return []
+
+
+def opyt_treydera_kartochka(self, k: str) -> str:
+    rr = [r for r in self._opyt_treydera() if r.get("R") is not None]
+    sel = _otbor_opyta(rr, k)
+    if len(sel) < 3:
+        return ""
+    xs = [float(r["R"]) for r in sel]
+    po = {}
+    razrez = "место" if k in ("перезаход", "срез", "стоп") else "действие"
+    for r in sel:
+        po.setdefault(str(r.get(razrez) or "—"), []).append(float(r["R"]))
+    L = [f"=== ТВОЙ ОПЫТ СДЕЛОК ПОД КЛЮЧОМ «{k}» — {_KL_OPYTA.get(k, '')} ===",
+         (f"всего {len(xs)}, в плюс {sum(1 for v in xs if v > 0.005)}, итог "
+          f"{sum(xs):+.2f}R").replace("-", "−")]
+    for kk, v in sorted(po.items(), key=lambda kv: -len(kv[1])):
+        if len(v) >= 3:
+            L.append((f"  · {kk}: {len(v)}, в плюс {sum(1 for x in v if x > 0.005)}, "
+                      f"итог {sum(v):+.2f}R").replace("-", "−"))
+    L.append(f"(годы: {', '.join(sorted({str(r.get('год')) for r in sel}))})")
+    return "\n".join(L)
+
+
+def polki_oglavlenie(self, n: int = 8) -> dict:
+    sch = {p: {} for p in POLKI}
+    try:
+        for z in (self.metki() or []) + (self.mayaki() or []):
+            p = self.polka_zapisi(z)
+            for y in self._yarlyki_spisok(z.get("ярлыки")):
+                sch[p][y] = sch[p].get(y, 0) + 1
+    except Exception:
+        pass
+    rr = [r for r in self._opyt_treydera() if r.get("R") is not None]
+    for k in _KL_OPYTA:
+        c = len(_otbor_opyta(rr, k))
+        if c >= 3:
+            sch["опыт"][k] = sch["опыт"].get(k, 0) + c
+    return {p: [y for y, _ in sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
+            for p, d in sch.items()}
+
+
+def polki_v_promt(self) -> str:
+    og = self.polki_oglavlenie()
+    if not any(og.values()):
+        return ""
+    s = ("\n=== ТВОЯ ПОЛКА — что у тебя есть, по ключам ===\n"
+         "Здесь только ключи. Само знание лежит у тебя и открывается по ключу.\n")
+    for p in POLKI:
+        if og.get(p):
+            s += f"  {p}: {', '.join(og[p])}\n"
+    s += ("Нужно — открой по ключу: в разговоре строкой MEMORY_REQUEST: <ключ>, "
+          "на работе — рукой vspomnit_po_yarlyku.\n")
+    return s
+
+
+Dvizhok._delo_birzha = _delo_birzha
+Dvizhok.polka_zapisi = polka_zapisi
+Dvizhok._opyt_treydera = _opyt_treydera
+Dvizhok.opyt_treydera_kartochka = opyt_treydera_kartochka
+Dvizhok.polki_oglavlenie = polki_oglavlenie
+Dvizhok.polki_v_promt = polki_v_promt
+
+_vspomnit_do_polok = Dvizhok.vspomnit
+
+
+def _vspomnit_s_polkami(self, zapros: str, limit: int = 6, o_chyom: str = "") -> str:
+    s = _vspomnit_do_polok(self, zapros, limit, o_chyom)
+    # на работе опыт сделок отдаёт Биржа (там карантин года), дома — сам житель
+    if str(o_chyom or "").strip().lower().startswith("работ"):
+        return s
+    low = str(zapros or "").lower()
+    verh = [c for c in (self.opyt_treydera_kartochka(k) for k in _KL_OPYTA if k in low) if c]
+    return "\n\n".join(verh + ([s] if s else []))
+
+
+Dvizhok.vspomnit = _vspomnit_s_polkami
+
+_yarlyki_do_polok = Dvizhok.yarlyki
+
+
+def _yarlyki_s_opytom(self) -> list:
+    d = dict(_yarlyki_do_polok(self) or [])
+    rr = [r for r in self._opyt_treydera() if r.get("R") is not None]
+    for k in _KL_OPYTA:
+        c = len(_otbor_opyta(rr, k))
+        if c >= 3:
+            d[k] = d.get(k, 0) + c
+    return sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+Dvizhok.yarlyki = _yarlyki_s_opytom
+
+_pamyat_v_promt_do_polok = Dvizhok.pamyat_v_promt
+
+
+def _pamyat_v_promt_s_polkami(self, *a, **k) -> str:
+    s = _pamyat_v_promt_do_polok(self, *a, **k) or ""
+    try:
+        return s + self.polki_v_promt()
+    except Exception:
+        return s
+
+
+Dvizhok.pamyat_v_promt = _pamyat_v_promt_s_polkami
+
+# TRI_POLKI_V1 - marker
+
+
+# ══ OPYT_NA_STOLE_V1 — все его должности: из постов, где он сидит ══
+def moi_posty(self) -> list:
+    out = []
+    try:
+        posty = self.dom.parent.parent.parent / "посты"
+        imya = self.dom.name
+        for d in sorted(posty.iterdir()) if posty.is_dir() else []:
+            try:
+                p = json.loads((d / "пост.json").read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            ks = p.get("кто_сидит") or {}
+            if str(ks.get("имя") or "") == imya:
+                out.append({"название": str(p.get("название") or d.name),
+                            "где": str(p.get("где") or ""),
+                            "слот": str(p.get("слот") or ""),
+                            "с": str(ks.get("с") or "")[:10]})
+    except Exception:
+        pass
+    return out
+
+
+def moi_posty_v_promt(self, seychas: str = "") -> str:
+    pp = self.moi_posty()
+    if not pp:
+        return ""
+    s = "\n=== ТВОИ ДОЛЖНОСТИ СЕЙЧАС ===\n" + "\n".join(
+        f"  {x['название']}" + (f" · {x['слот']}" if x['слот'] else "")
+        + (f" (с {x['с']})" if x['с'] else "") for x in pp) + "\n"
+    if seychas:
+        s += f"Здесь и сейчас ты работаешь: {seychas}.\n"
+    return s
+
+
+Dvizhok.moi_posty = moi_posty
+Dvizhok.moi_posty_v_promt = moi_posty_v_promt
+_pamyat_v_promt_do_postov = Dvizhok.pamyat_v_promt
+
+
+def _pamyat_v_promt_s_postami(self, *a, **k) -> str:
+    s = _pamyat_v_promt_do_postov(self, *a, **k) or ""
+    try:
+        return s + self.moi_posty_v_promt()
+    except Exception:
+        return s
+
+
+Dvizhok.pamyat_v_promt = _pamyat_v_promt_s_postami
+
+# OPYT_NA_STOLE_V1 - marker
+
+
+# ══ OSMYSLENIE_EPIZODA_V1 — полки работ в памяти; журнал просева — из паспорта ══
+def _raboty_zapisi(self) -> list:
+    out = []
+    d = self.dom / "опыт"
+    for f in sorted(d.glob("работа_*.jsonl")) if d.is_dir() else []:
+        try:
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                ln = ln.strip()
+                if ln:
+                    try:
+                        out.append(json.loads(ln))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return out
+
+
+Dvizhok._raboty_zapisi = _raboty_zapisi
+_vspomnit_do_rabot = Dvizhok.vspomnit
+
+
+def _vspomnit_s_rabotami(self, zapros: str, limit: int = 6, o_chyom: str = "") -> str:
+    s = _vspomnit_do_rabot(self, zapros, limit, o_chyom)
+    try:
+        low = str(zapros or "").lower()
+        slova = [w for w in low.split() if len(w) > 2]
+        na_rabote = str(o_chyom or "").strip().lower().startswith("работ")
+        hits = []
+        for r in self._raboty_zapisi():
+            # на работе осмысления прогонов отдаёт Биржа (там карантин года)
+            if na_rabote and r.get("прогон"):
+                continue
+            t = (str(r.get("осмысление") or "") + " " + str(r.get("ситуация") or "")).lower()
+            sc = sum(1 for w in slova if w in t)
+            if any(str(k) in low for k in (r.get("ключи") or []) if k):
+                sc += self.YARLYK_VES
+            if str(r.get("работа") or "").lower() and str(r.get("работа")).lower() in low:
+                sc += self.YARLYK_VES
+            if sc > 0:
+                hits.append((sc, str(r.get("когда") or ""), r))
+        if not hits:
+            return s
+        hits.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        L = [f"— [{str(r.get('когда'))[:10]} · опыт работы: {r.get('работа')}] "
+             f"{r.get('осмысление')} ⟨{', '.join(r.get('ключи') or [])}⟩"
+             for _s, _k, r in hits[:3]]
+        return "\n".join(L) + (("\n" + s) if s else "")
+    except Exception:
+        return s
+
+
+Dvizhok.vspomnit = _vspomnit_s_rabotami
+_polki_v_promt_do_rabot = Dvizhok.polki_v_promt
+
+
+def _polki_v_promt_s_rabotami(self) -> str:
+    s = _polki_v_promt_do_rabot(self) or ""
+    try:
+        po = {}
+        for r in self._raboty_zapisi():
+            rab = str(r.get("работа") or r.get("пост") or "работа")
+            d = po.setdefault(rab, {})
+            for k in r.get("ключи") or []:
+                if k:
+                    d[k] = d.get(k, 0) + 1
+        if po:
+            L = [f"  опыт работы «{rab}»: " + (", ".join(k for k, _ in sorted(
+                d.items(), key=lambda kv: -kv[1])[:6]) or "осмысления без ключей")
+                for rab, d in po.items()]
+            if not s:
+                s = ("\n=== ТВОЯ ПОЛКА — что у тебя есть, по ключам ===\n"
+                     "Здесь только ключи. Само знание лежит у тебя и открывается по ключу.\n")
+            s += "\n".join(L) + "\n"
+    except Exception:
+        pass
+    return s
+
+
+Dvizhok.polki_v_promt = _polki_v_promt_s_rabotami
+
+
+def _prosev_put(self) -> Path:
+    return self.dom / "просев_съедено.json"
+
+
+def _prosev_spisok(self) -> list:
+    try:
+        d = json.loads(self._prosev_put().read_text(encoding="utf-8"))
+        if isinstance(d, list):
+            return d
+    except Exception:
+        pass
+    return list(self.p.get("_prosev_consumed") or [])
+
+
+Dvizhok._prosev_put = _prosev_put
+Dvizhok._prosev_spisok = _prosev_spisok
+_sobrat_dlya_proseva_do = Dvizhok.sobrat_dlya_proseva
+
+
+def _sobrat_dlya_proseva_iz_fayla(self, limit: int = 8) -> list:
+    self.p["_prosev_consumed"] = self._prosev_spisok()
+    try:
+        return _sobrat_dlya_proseva_do(self, limit)
+    finally:
+        self.p.pop("_prosev_consumed", None)
+
+
+Dvizhok.sobrat_dlya_proseva = _sobrat_dlya_proseva_iz_fayla
+
+
+def _otmetit_prosejannym_v_fayl(self, ids: list, cap: int = 500):
+    spisok = self._prosev_spisok()
+    for i in ids or []:
+        if i and i not in spisok:
+            spisok.append(i)
+    spisok = spisok[-cap:]
+    try:
+        _atomarno(self._prosev_put(), json.dumps(spisok, ensure_ascii=False, indent=1))
+    except Exception as e:
+        _skazat(f"{self.dom.name}: журнал просева не записался ({e})")
+    self.p.pop("_prosev_consumed", None)
+
+
+Dvizhok.otmetit_prosejannym = _otmetit_prosejannym_v_fayl
+_IMYA_SOHR = next((n for n in dir(Dvizhok) if n.endswith("охранить")), None)
+if _IMYA_SOHR:
+    _sohranit_do = getattr(Dvizhok, _IMYA_SOHR)
+
+    def _sohranit_bez_romana(self):
+        self.p.pop("_prosev_consumed", None)
+        _sohranit_do(self)
+        try:
+            d = json.loads(self.passport_path.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and "_prosev_consumed" in d:
+                staroe = d.pop("_prosev_consumed") or []
+                spisok = self._prosev_spisok()
+                for i in staroe:
+                    if i not in spisok:
+                        spisok.append(i)
+                _atomarno(self._prosev_put(), json.dumps(spisok[-500:], ensure_ascii=False, indent=1))
+                _atomarno(self.passport_path, json.dumps(d, ensure_ascii=False, indent=2))
+                self.p = d
+        except Exception:
+            pass
+
+    setattr(Dvizhok, _IMYA_SOHR, _sohranit_bez_romana)
+
+# OSMYSLENIE_EPIZODA_V1 - marker

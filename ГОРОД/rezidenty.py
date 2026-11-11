@@ -365,3 +365,80 @@ def sobrat_dushu(p: dict) -> str:
 
 
 # GOROD_REZIDENTY_V1 — маркер идемпотентности
+
+
+# ══ OSMYSLENIE_POSTOV_V1 — на посту: его осмысления этой работы и его полки ══
+_POST_SEYCHAS = {}   # имя жителя → пост, на который его сейчас подняли
+_lichnost_na_postu_do_osm = lichnost_na_postu
+
+
+def lichnost_na_postu(post_id: str) -> tuple:   # noqa: F811
+    p, dom = _lichnost_na_postu_do_osm(post_id)
+    try:
+        if p:
+            _POST_SEYCHAS[str(p.get("Official_Name") or "")] = post_id
+    except Exception:
+        pass
+    return p, dom
+
+
+_sobrat_dushu_do_osm = sobrat_dushu
+
+
+def sobrat_dushu(p: dict) -> str:   # noqa: F811
+    s = _sobrat_dushu_do_osm(p)
+    try:
+        imya = str((p or {}).get("Official_Name") or "")
+        post = _POST_SEYCHAS.pop(imya, None)
+        if not post:
+            return s
+        dom = dom_zhitelya(imya)
+        if dom is None:
+            return s
+        import osmyslenie as _om
+        L = _om.stroki_na_stol(dom, post, _om.KLYUCHI_SEYCHAS.get(post), n=3,
+                               nazvanie=str((get_post(post) or {}).get("название") or post))
+        dop = ("\n" + "\n".join(L) + "\n") if L else ""
+        try:
+            import sys as _s
+            _zh = str(_REPO / "жители")
+            if _zh not in _s.path:
+                _s.path.insert(0, _zh)
+            from dvizhok import Dvizhok as _Dv
+            og = _Dv(dom).polki_v_promt()
+            dop += og or ""
+        except Exception:
+            pass
+        return s + dop
+    except Exception:
+        return s
+
+
+# OSMYSLENIE_POSTOV_V1 - marker
+
+
+# ══ ARCHI_V_KARTOTEKU_V1 — кто на посту: и по «Посты», и по найму со страницы Работы ══
+# Страница Работы пишет найм в пост.json («кто_сидит») и в паспорт («Работа»).
+# Раньше город смотрел только «Посты» и считал такой пост вакансией.
+_kto_na_postu_vse_do_raboty = kto_na_postu_vse
+
+
+def kto_na_postu_vse(post_id: str) -> list:   # noqa: F811
+    out = _kto_na_postu_vse_do_raboty(post_id)
+    if out:
+        return out
+    m = _read_json(POSTY_DIR / post_id / "пост.json", {}) or {}
+    imya = str(((m.get("кто_сидит") or {}).get("имя")) or "").strip()
+    if imya and dom_zhitelya(imya) is not None:
+        return [imya]
+    if KOVCHEG.exists():
+        for d in sorted(KOVCHEG.iterdir()):
+            if not d.is_dir():
+                continue
+            r = (_read_json(d / "passport.json", {}) or {}).get("Работа")
+            if isinstance(r, dict) and r.get("пост") == post_id:
+                return [d.name]
+    return []
+
+
+# ARCHI_V_KARTOTEKU_V1 - marker

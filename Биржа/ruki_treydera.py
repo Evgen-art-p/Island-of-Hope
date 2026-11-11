@@ -47,7 +47,15 @@ def shema(rabochiy_etazh: str = "") -> list:
                 f"На ступень ниже твоего рабочего — {nizhe}, выше — {vyshe}."),
             "parameters": {"type": "object", "properties": {
                 "этаж": {"type": "string",
-                         "description": "например H1"}},
+                         "description": "например H1"},
+                "инструмент": {"type": "string",
+                               "description": ("необязательно: другая пара, "
+                                               "например USDCNH — посмотреть "
+                                               "и посчитать, если её котировки "
+                                               "есть в городе. Пусто — твоя "
+                                               "пара. Входишь всё равно только "
+                                               "по своей")},
+            },
                 "required": ["этаж"]}}},
         {"type": "function", "function": {
             "name": "izmerit_volnu",
@@ -99,8 +107,39 @@ def shema(rabochiy_etazh: str = "") -> list:
                          "description": "пусто — твой рабочий"},
                 "баров": {"type": "integer",
                           "description": "сколько баров назад смотреть, "
-                                         "по умолчанию 140"}},
+                                         "по умолчанию 140"},
+                "инструмент": {"type": "string",
+                               "description": ("необязательно: другая пара, "
+                                               "например USDCNH — посмотреть "
+                                               "и посчитать, если её котировки "
+                                               "есть в городе. Пусто — твоя "
+                                               "пара. Входишь всё равно только "
+                                               "по своей")},
+            },
                 "required": []}}},
+        # CHISLA_V_TOCHKAH_V1 (слово Шефа 30.09: «не приблизительно —
+        # пусть точно сверяет»). Прибор, не судья: какие бары сравнивать,
+        # выбирает трейдер на кадре; рука отдаёт их числа.
+        {"type": "function", "function": {
+            "name": "chisla_v_tochkah",
+            "description": (
+                "ТОЧНЫЕ числа в барах, которые ты выбрала на кадре: high, "
+                "low, close и AO каждого. Назови даты баров — например две "
+                "вершины и под ними два горба AO — рука отдаст их числа, "
+                "без выводов. Этими числами и называй четыре числа "
+                "расхождения в приказе, не на глаз. Даты бери с кадра или "
+                "из krayniye_tochki."),
+            "parameters": {"type": "object", "properties": {
+                "бары": {"type": "string",
+                         "description": ("даты баров через запятую, вид "
+                                         "2019.12.13 08:00, 2019.12.27 16:00")},
+                "этаж": {"type": "string",
+                         "description": "пусто — твой рабочий"},
+                "инструмент": {"type": "string",
+                               "description": ("необязательно: другая пара; "
+                                               "пусто — твоя")},
+            },
+                "required": ["бары"]}}},
         {"type": "function", "function": {
             "name": "pokazat_etazh",
             "description": (
@@ -249,15 +288,27 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
          imya_zhitelya: str = "") -> dict:
     """Собрать руки для этого трейдера. Возвращает {имя: функция}."""
 
+    # RUKA_CHUZHAYA_PARA_V1: какую пару смотреть. Пусто — свою.
+    def _para(args: dict):
+        _i = str((args or {}).get("инструмент") or "").strip().upper()
+        _i = "".join(ch for ch in _i if ch.isalnum() or ch in "._")[:16]
+        if not _i or _i == str(symbol).strip().upper():
+            return symbol, False
+        return _i, True
+
     def _stol(args: dict) -> str:
         tf = str(args.get("этаж", "")).strip().upper()
+        _sym, _chuzhaya = _para(args)   # RUKA_CHUZHAYA_PARA_V1
         try:
             import masshtab
             if not masshtab.est(tf):
                 return f"Такого этажа нет: {tf}. Есть: {', '.join(masshtab.LESTNICA)}"
             import stol as _s
-            t = _s.nakryt(symbol, tf, self_key=self_key)
-            chisla = f"=== СТОЛ · {symbol} {tf} ===\n" + _s.slovami(t)
+            t = _s.nakryt(_sym, tf, self_key=self_key)
+            if _chuzhaya and not (t or {}).get("приборы"):
+                return (f"котировок {_sym} {tf} в городе нет (или не "
+                        f"дали) — смотреть нечего. Твоя пара — {symbol}.")
+            chisla = f"=== СТОЛ · {_sym} {tf} ===\n" + _s.slovami(t)
             # STOL_S_KADROM_V1: кадр важнее чисел, и просить его
             # отдельной рукой трейдер не обязан. Рисуем этот же этаж
             # и кладём числа следом. Картинка не вышла — уходят одни
@@ -265,12 +316,22 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
             try:
                 import grafik
                 # KADR_BEZ_ALLIGATORA_V1: трейдеру — без линий
-                put = grafik.kadr(symbol, tf, linii=False)
+                put = grafik.kadr(_sym, tf, linii=_s_liniyami(slot))
             except Exception as _ek:
                 put = None
                 print(f"[СТОЛ] кадр {tf} не нарисовался ({_ek}) — только числа")
+            # RUKA_CHUZHAYA_PARA_V1: подпись прямая — чей это кадр.
+            # На чужую пару «домой» не досылаем: она не уходила со
+            # своего рынка, а посмотрела в сторону.
+            if _chuzhaya:
+                if put:
+                    return (f"[КАДР: {put}] ВЗЯТ РУКОЙ · {_sym} {tf} — "
+                            f"посмотреть, не твоя рабочая пара ({symbol}); "
+                            f"это НЕ картинка Шефа · стол ниже\n" + chisla)
+                return chisla
             if put:
-                return (f"[КАДР: {put}] {symbol} {tf} · стол ниже\n"
+                return (f"[КАДР: {put}] ТВОЙ СТОЛ, взят рукой · {symbol} {tf} — "
+                        f"это НЕ картинка Шефа · стол ниже\n"
                         + chisla + _domoy(tf))
             return chisla + _domoy(tf)
         except Exception as e:
@@ -380,7 +441,7 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
                 return f"такого этажа нет: {tf}"
             import grafik
             # KADR_BEZ_ALLIGATORA_V1: трейдеру — без линий
-            put = grafik.kadr(symbol, tf, linii=False)
+            put = grafik.kadr(symbol, tf, linii=_s_liniyami(slot))
         except Exception as e:
             return f"показать {tf} не вышло: {e}"
         if not put:
@@ -404,7 +465,7 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
             if not svoy or svoy == (kuda_hodil or "").strip().upper():
                 return ""
             import grafik
-            _p = grafik.kadr(symbol, svoy, linii=False)
+            _p = grafik.kadr(symbol, svoy, linii=_s_liniyami(slot))
             if not _p:
                 return (f"\n\n(домой на {svoy} не вернулся: котировок не "
                         f"дали. Решай по своему этажу, а не по {kuda_hodil}.)")
@@ -425,12 +486,13 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
             if not masshtab.est(tf):
                 tf = rabochiy_etazh if masshtab.est(rabochiy_etazh) else "H4"
             n = int(args.get("баров") or 140)
+            _sym_k, _ = _para(args)   # RUKA_CHUZHAYA_PARA_V1
             from feed_source import bars as _bars
-            b, _p = _bars(symbol, tf, max(n, 60))
+            b, _p = _bars(_sym_k, tf, max(n, 60))
         except Exception as e:
             return f"крайние точки не посчитались: {e}"
         if not b:
-            return f"котировок {symbol} {tf} не дали"
+            return f"котировок {_sym_k} {tf} в городе нет (или не дали)"
         b = b[-n:]
 
         def _kray(kusok, imya):
@@ -446,17 +508,79 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
         d = min(b, key=lambda x: x["low"])
         mezhdu = abs(b.index(v) - b.index(d))
         return ("=== КРАЙНИЕ ТОЧКИ · факты, не разметка ===\n"
-                f"{symbol} {tf}, {len(b)} баров "
+                f"{_sym_k} {tf}, {len(b)} баров "
                 f"({b[0].get('date')} → {b[-1].get('date')})\n"
                 + _kray(b, "всё окно") + "\n"
                 + f"между вершиной и дном: {mezhdu} баров\n"
                 + _kray(b[:pol], "первая половина") + "\n"
                 + _kray(b[pol:], "вторая половина"))
 
+    def _chisla_v_tochkah(args: dict) -> str:
+        """CHISLA_V_TOCHKAH_V1: точные числа в барах, названных трейдером."""
+        try:
+            import masshtab
+            tf = str(args.get("этаж", "")).strip().upper()
+            if not masshtab.est(tf):
+                tf = rabochiy_etazh if masshtab.est(rabochiy_etazh) else "H4"
+            _sym_c, _ = _para(args)
+            syrye = args.get("бары")
+            if isinstance(syrye, list):
+                daty = [str(x).strip() for x in syrye if str(x).strip()]
+            else:
+                daty = [x.strip() for x in str(syrye or "").replace(";", ",")
+                        .split(",") if x.strip()]
+            if not daty:
+                return ("назови бары: даты через запятую, вид "
+                        "2019.12.13 08:00, 2019.12.27 16:00")
+            daty = daty[:6]
+            from feed_source import bars as _bars
+            b, pt = _bars(_sym_c, tf, 600)
+            try:
+                from hooks import _tolko_zakrytye
+                b = _tolko_zakrytye(b)
+            except Exception:
+                pass
+            # как кадр: не заглядываем вперёд бара города
+            try:
+                from hooks import load_trading_state as _lts
+                _bg = str(((_lts() or {}).get("рынок") or {}).get("бар") or "")
+                if _bg and b:
+                    _do = [x for x in b if str(x.get("date", "")) <= _bg]
+                    if _do:
+                        b = _do
+            except Exception:
+                pass
+            if not b:
+                return f"котировок {_sym_c} {tf} в городе нет (или не дали)"
+            from williams_core import compute_ao_series
+            ao = compute_ao_series([x["high"] for x in b], [x["low"] for x in b])
+            gde = {str(x.get("date")): i for i, x in enumerate(b)}
+            z = 2 if (pt or 0) >= 0.01 else 5
+            L = [f"=== ЧИСЛА В ТОЧКАХ · {_sym_c} {tf} · точно, не на глаз ==="]
+            for d in daty:
+                i = gde.get(d)
+                if i is None:
+                    den = [str(x.get("date")) for x in b
+                           if str(x.get("date", "")).startswith(d[:10])][:6]
+                    L.append(f"{d}: такого бара нет"
+                             + (f" — в этот день есть: {', '.join(den)}"
+                                if den else " (дата не та или вне истории)"))
+                    continue
+                x, a = b[i], ao[i]
+                L.append(f"{d}: high {x['high']:.{z}f} · low {x['low']:.{z}f}"
+                         f" · close {x['close']:.{z}f} · AO "
+                         + (f"{a:.6f}" if a is not None else "ещё не считается"))
+            L.append("Для вершины бери high, для впадины — low; AO — той же "
+                     "строки. Эти числа и называй в приказе.")
+            return "\n".join(L)
+        except Exception as e:
+            return f"числа не посчитались: {e}"
+
     def _moya_kartina(args: dict) -> str:
         try:
             import kartina
-            return kartina.slovami(ceh, slot, symbol)
+            return kartina.slovami(ceh, slot, symbol,
+                                   kto=imya_zhitelya or "")   # KARTINA_TOLKO_SVOYO_V1
         except Exception as e:
             return f"картина не прочиталась: {e}"
 
@@ -615,11 +739,12 @@ def ruki(symbol: str, ceh: str, slot: str, self_key: str,
             "moya_kartina": _moya_kartina,            # KARTINA_SVOYA_V1
             "zapisat_v_kartinu": _zapisat_v_kartinu,
             "krayniye_tochki": _krayniye,      # KRAYNIYE_TOCHKI_V1
+            "chisla_v_tochkah": _chisla_v_tochkah,   # CHISLA_V_TOCHKAH_V1
             "rastyanut_volnu": _rastyanut,      # RASTYAZHKA_V1
             "pokazat_etazh": _pokazat_etazh}
     itog.update(_ruka_mayaka_ruki(slot))   # RUKA_MAYAKA_V1
     itog.update(_ruka_prikaza_ruki(          # RUKA_PRIKAZA_V1
-        symbol, slot, imya_zhitelya, rabochiy_etazh))
+        symbol, slot, imya_zhitelya, rabochiy_etazh, ceh=ceh))   # PASPORT_RUKI_V1
     return itog
 
 
@@ -751,9 +876,9 @@ def _ruka_prikaza_shema() -> list:
                            "description": ("для ENTER: цена в ПЕРВОЙ точке "
                                            "расхождения — вершина (вниз: "
                                            "впадина). Все четыре числа "
-                                           "называй С КАДРА, на глаз: стол "
-                                           "их не даёт, точность до пункта "
-                                           "не нужна. Бери их из ОДНОЙ "
+                                           "называй ТОЧНО, рукой chisla_v_tochkah: "
+                                           "назови ей даты баров, что выбрала на "
+                                           "кадре, — она отдаст их цены и AO. Бери их из ОДНОЙ "
                                            "пары: обе цены и обе ямы "
                                            "(горба) AO — с одних мест, "
                                            "точки разных пар не смешивай. "
@@ -769,7 +894,7 @@ def _ruka_prikaza_shema() -> list:
                 "ao_1": {"type": "number",
                          "description": ("для ENTER: AO в этой же ПЕРВОЙ "
                                          "точке — горб (яма) той же пары, "
-                                         "с кадра на глаз")},
+                                         "точно, из chisla_v_tochkah")},   # CHISLA_V_TOCHKAH_V1
                 "цена_2": {"type": "number",
                            "description": ("для ENTER: цена во ВТОРОЙ точке "
                                            "той же пары — новая вершина "
@@ -790,7 +915,8 @@ def _ruka_prikaza_shema() -> list:
                                           "вспоминал правило")},
                 "новый_стоп": {"type": "number",
                                "description": "для MOVE_STOP"},
-                "долить": {"type": "number", "description": "для ADD"},
+                "долить": {"type": "number", "description": (
+                    "для ADD — не нужно: доливок на этом месте нет")},   # UBORKA_0911_V1
                 "почему": {"type": "string",
                            "description": "коротко, своими словами"}},
                 "required": ["что"]}}},
@@ -842,8 +968,8 @@ def _sled_prikaza(zapis: dict) -> None:
 
 
 def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
-                       rabochiy_etazh: str) -> dict:
-    tablo = _TABLO_PO_SLOTU.get(str(slot).upper())
+                       rabochiy_etazh: str, ceh: str = "") -> dict:
+    tablo = _klyuch_tablo(ceh, slot)   # PASPORT_RUKI_V1
     if not tablo:
         return {}     # не торговое место — руки нет
 
@@ -864,6 +990,16 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
                     continue
                 _kto = str(_p.get("slot") or _p.get("agent") or "")
                 if _kto and _kto.upper() != str(slot).upper():
+                    continue
+                # SVOYO_TOLKO_SVOYO_V1: своё — по номеру счёта места,
+                # иначе на одной паре чужая заявка отбивает твой вход.
+                try:
+                    from nositel import magic_slota as _ms_sv
+                    _mm_sv = _nomer_r(slot)
+                except Exception:
+                    _mm_sv = None
+                if (_mm_sv is not None and _p.get("magic") is not None
+                        and _p.get("magic") != _mm_sv):
                     continue
                 _n = str(_p.get("direction") or "?").upper()
                 _c = _p.get("entry")
@@ -886,10 +1022,58 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
         # описку в имени, ничего не выдумывая за трейдера.
         args = {str(_k).strip().lower(): _v
                 for _k, _v in (args or {}).items()}
+        _faza_zapisat(tablo, args)   # FAZA_HODA_V1
+        _alli_zapisat(tablo, args)   # ALLIGATOR_OPYT_V1
+        _cherez_zapisat(tablo, args)   # CHEREZ_ETAZH_V1
+        _hm_vyzov("zapisat", slot, symbol, rabochiy_etazh, tablo, args)   # HOD_MESYACA_V1
         chto = str(args.get("что", "")).upper().strip()
         if chto not in _PRIKAZY:
             return ("Такого приказа нет: " + (chto or "пусто") +
                     ". Есть: " + ", ".join(_PRIKAZY) + ". Ничего не отдано.")
+        # VEDENIE_SDELKI_V1: в сделке — решение с обоснованием (только A08)
+        _obosn = _vs_vyzov(slot, symbol, rabochiy_etazh, chto, args)
+        if _obosn:
+            return _obosn
+        # DVE_KNIGI_V1: на A08 CLOSE — решение КНИГИ МЕСТА, город ведёт свою
+        if str(slot).strip().upper() in _GOROD_VEDYOT_SLOTY and chto == "CLOSE":
+            try:
+                _dolya = float(args.get("доля") or 1.0)
+            except (TypeError, ValueError):
+                _dolya = 1.0
+            _dolya = max(0.05, min(1.0, _dolya))
+            try:
+                from hooks import load_trading_state as _lts
+                _bar = str(((_lts().get("рынок") or {}).get("бар")) or "")
+            except Exception:
+                _bar = ""
+            print(f"[КНИГА МЕСТА] 📕 CLOSE доля={_dolya:g} бар={_bar} "
+                  f"символ={symbol}")
+            try:   # KNIGI_V_OTCHETE_V1: решение — в стол, отчёт его прочтёт
+                from hooks import load_trading_state as _lts2, save_trading_state as _sts2
+                from datetime import datetime as _dt2
+                _t2 = _lts2()
+                _t2.setdefault("книга_места", []).append({
+                    "бар": _bar, "доля": _dolya, "symbol": str(symbol),
+                    "ts": _dt2.now().isoformat()})
+                _sts2(_t2)
+            except Exception as _e2:
+                print(f"[КНИГА МЕСТА] в стол не записалось ({_e2})")
+            _hv = ("Твоя книга закрыта целиком." if _dolya >= 0.999 else
+                   "Остаток твоей книги живёт дальше с тем же стопом.")
+            return (f"Принято как решение твоей книги: CLOSE, доля {_dolya:g} "
+                    "исходной позиции. Городскую позицию это не меняет: её "
+                    "ведёт город по стопу и трём условиям. " + _hv)
+        # GOROD_VEDYOT_A08_V1: на A08 после входа позицию ведёт город
+        if (str(slot).strip().upper() in _GOROD_VEDYOT_SLOTY
+                and chto == "MOVE_STOP"):
+            print(f"[ВЫХОД ГОРОДА] {slot}: {chto} не принят — позицию ведёт город")
+            return ("Приказ НЕ отдан: на этом месте после входа позицию ведёт "
+                    "город. Стоп стоит, где поставлен; город закроет, когда на "
+                    "твоём этаже сойдутся три условия против (разворотник против, "
+                    "приседающий, дивер), или по стопу. Доливает тоже город — одну "
+                    "доливку, на пробой откатной вершины часовика. "
+                    "Твоё — вход: заявку ставишь, переставляешь (MOVE_ORDER) и "
+                    "снимаешь (CANCEL) сам. Позицию можно держать — HOLD.")
 
         napravlenie = str(args.get("направление", "")).upper().strip() or None
         cena = args.get("цена")
@@ -1044,10 +1228,17 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
                              ((locals().get("_d") or {}).get("пары") or []))
             except Exception:
                 _est_k = False
-            if "цена прежний край не взяла" in _bolshoy_k and not _est_k:
+            if _kray_ne_vzyat(_bolshoy_k) and not _est_k:   # ZAPRETY_PO_SMYSLU_V1
                 print(f"[КРАЙ] ✗ {symbol} {rabochiy_etazh} "
                       f"{napravlenie}: большой край не взят — вход не "
                       f"принят")
+                if _dzh(slot):   # HOD_MESYACA_V1: без «мелкий дивер — не вход»
+                    return ("Приказ НЕ отдан: город расхождения не видит ни "
+                            "на одном размере — ни на весь ход, ни у края. "
+                            "Город: «" + _bolshoy_k.strip() + "». Дивер — "
+                            "твоё условие и в откате: нужен дивер у края "
+                            "своего хода. Посмотри числа ещё раз или реши "
+                            "снова.")
                 return ("Приказ НЕ отдан: цена прежний край большого "
                         "хода не взяла — откат ещё идёт. Город: «"
                         + _bolshoy_k.strip() + "». Пока цена не взяла "
@@ -1064,9 +1255,7 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
                 _net_par = not (_dd_y.get("пары") or [])
             except Exception:
                 _sl_y, _net_par = "", False
-            if _net_par and any(_s in _sl_y for _s in (
-                    "второй ямки нет", "второй горки нет",
-                    "второй ещё нет")):
+            if _net_par and _vtoroy_net(_sl_y):   # ZAPRETY_PO_SMYSLU_V1
                 _short_y = str(napravlenie).upper() == "SHORT"
                 _odna = "одна горка" if _short_y else "одна яма"
                 _dve = ("две горки с ямкой между ними" if _short_y
@@ -1171,6 +1360,21 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
                         else ("REJECTED" if chto == "WAIT"
                               else v.get("verdict")))
         v["reason"] = str(args.get("почему", "")).strip()
+        if chto == "CLOSE":   # DVE_KNIGI_V2: доля исходной позиции едет в поле «объём»
+            try:
+                _sh = float(args.get("доля") or 1.0)
+            except (TypeError, ValueError):
+                _sh = 1.0
+            _sh = max(0.05, min(1.0, _sh))
+            v["add_lot"] = (round(_sh, 4) if _sh < 0.999 else None)
+            if _dzh(slot):
+                print(f"[КНИГА МЕСТА] 📕 приказ CLOSE доля={_sh:g} бар={bar} символ={symbol}")
+        if chto == "ADD" and _dzh(slot):
+            print(f"[КНИГА МЕСТА] 📗 приказ ADD нога={args.get('долить')} бар={bar} символ={symbol}")
+            if isinstance(args.get("новый_стоп"), (int, float)):
+                v["new_stop"] = args["новый_стоп"]
+        if chto == "MOVE_STOP" and _dzh(slot):
+            print(f"[КНИГА МЕСТА] 📘 приказ MOVE_STOP → {args.get('новый_стоп')} бар={bar} символ={symbol}")
         if chto == "WAIT":
             # не работаю — значит и цены моей на табло нет. Иначе
             # вчерашняя цена лежит рядом с сегодняшним отказом и
@@ -1226,14 +1430,17 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
             return (f"Приказ отдан: {adresat} принял ENTER {napravlenie} "
                     f"{symbol} по {cena}, стоп {stop}"
                     + (f", бар {bar}" if bar else "")
-                    + ". Заявка на табло.")
+                    + ". Заявка на табло."
+                    + _hm_vyzov("metka_vhoda", slot, symbol, napravlenie, bar))   # HOD_MESYACA_V1
         if chto == "MOVE_ORDER":
             return (f"Приказ отдан: {adresat} переставит заявку на "
                     f"{cena}, стоп {stop}"
-                    + (f", бар {bar}" if bar else "") + ".")
+                    + (f", бар {bar}" if bar else "") + "."
+                    + _hm_vyzov("zayavka_perestavlena", slot, symbol, bar))   # HOD_MESYACA_V1
         if chto == "CANCEL":
             return (f"Приказ отдан: {adresat} снимет заявку"
-                    + (f", бар {bar}" if bar else "") + ".")
+                    + (f", бар {bar}" if bar else "") + "."
+                    + _hm_vyzov("snyatie", slot, symbol, v.get("reason"), bar))   # HOD_MESYACA_V1
         if chto == "WAIT":
             return f"Принято: не работаешь на этом баре{', ' + bar if bar else ''}."
         return (f"Приказ отдан: {adresat} принял {chto}"
@@ -1243,3 +1450,1170 @@ def _ruka_prikaza_ruki(symbol: str, slot: str, imya_zhitelya: str,
 
 
 # RUKA_PRIKAZA_V1 - marker
+
+# RUKA_CHUZHAYA_PARA_V1 - marker
+
+# ODNO_PRAVILO_RB_V1 - marker
+
+
+# ── FAZA_HODA_V1: фаза хода на табло ──────────────────────────
+# Опыт второго уровня (A07). Фаза — не часть приказа: она ложится на
+# табло СРАЗУ, ещё до проверок, чтобы не пропасть, если сам приказ не
+# принят. Полей фазы нет (у A06 их и не предлагают) — ничего не делаем.
+_FAZA_POLYA = ("ход", "начало_хода", "фаза", "уверенность", "почему_фаза")
+
+
+def _faza_zapisat(tablo: str, args: dict) -> None:
+    try:
+        if not any(str((args or {}).get(p) or "").strip()
+                   for p in _FAZA_POLYA):
+            return
+        from hooks import load_trading_state, save_trading_state
+        t = load_trading_state()
+        bar = str((t.get("рынок") or {}).get("бар") or t.get("бар") or "")
+        z = {"бар": bar}
+        for p in _FAZA_POLYA:
+            z[p] = str((args or {}).get(p) or "").strip()
+        t.setdefault(tablo, {})["фаза"] = z
+        save_trading_state(t)
+        print(f"[ФАЗА] {tablo}: ход {z['ход'] or '—'} с "
+              f"{z['начало_хода'] or '—'} · {z['фаза'] or '—'} "
+              f"({z['уверенность'] or '—'})")
+    except Exception as _e:
+        print(f"[ФАЗА] не записалась ({_e}) — приказ идёт как есть")
+
+
+# FAZA_HODA_V1 - marker
+
+# KARTINA_TOLKO_SVOYO_V1 - marker
+
+
+# ── ARHIV_RUKI_V1: рука «из архива» ──────────────────────────
+# Слово Шефа (01.10): чужой опыт — по просьбе, если своего мало, «но
+# не всегда»; перед показом — «это не источник, а опыт». Правило живёт
+# в Биржа/arhiv_birzhi.py (iz_arhiva), здесь только дверь.
+_ARHIV_SHEMA = {"type": "function", "function": {
+    "name": "iz_arhiva",
+    "description": (
+        "Достать из Архива Биржи похожие места из прошлых прогонов: где "
+        "это было, что ты решала, какими словами, что сказал судья фаз. "
+        "Сперва — ТВОЁ. Если своего мало, архив добавит немного чужого "
+        "опыта, с предупреждением: это не источник и не правило, а "
+        "чей-то опыт; источник — твои знания. По твоей паре — только то, "
+        "что на рынке было раньше текущего бара."),
+    "parameters": {"type": "object", "properties": {
+        "что": {"type": "string",
+                "description": ("словами, что ищешь: например «пятая GBPUSD "
+                                "D1», «край», «свои числа», «дивер вход»")}},
+        "required": ["что"]}}}
+
+_shema_bez_arhiva = shema
+
+
+def shema(rabochiy_etazh: str = "") -> list:      # noqa: F811
+    s = _shema_bez_arhiva(rabochiy_etazh)
+    s.append(_ARHIV_SHEMA)
+    return s
+
+
+_ruki_bez_arhiva = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_bez_arhiva(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                         rabochiy_etazh=rabochiy_etazh,
+                         imya_zhitelya=imya_zhitelya)
+
+    def _iz_arhiva(args: dict) -> str:
+        try:
+            import arhiv_birzhi as _ab
+            from hooks import load_trading_state as _lts
+            bar = str(((_lts() or {}).get("рынок") or {}).get("бар") or "")
+            return _ab.iz_arhiva(str((args or {}).get("что") or ""),
+                                 imya_zhitelya or "", symbol, bar, slot)
+        except Exception as e:
+            return f"архив не открылся: {e}"
+
+    r["iz_arhiva"] = _iz_arhiva
+    return r
+
+
+# ARHIV_RUKI_V1 - marker
+
+# SVOYO_TOLKO_SVOYO_V1 - marker
+
+
+# ── ZAPRETY_PO_SMYSLU_V1: сверку узнаём по смыслу, не по точной фразе ──
+# 02.10: Брат переписал слова сверки («цена край своего хода не взяла»,
+# «второй горки ещё нет»), а запреты искали старые фразы знак в знак —
+# и молча перестали срабатывать. Теперь узнают и старые, и новые.
+import re as _re_zp
+
+
+def _kray_ne_vzyat(s) -> bool:
+    """«цена прежний край не взяла» / «цена край своего хода не взяла»."""
+    return bool(_re_zp.search(r"край(?:\s+своего\s+хода)?\s+не\s+взял",
+                              str(s or "")))
+
+
+def _vtoroy_net(s) -> bool:
+    """«второй ямки нет» / «второй горки ещё нет» / «второй ещё нет»."""
+    return bool(_re_zp.search(
+        r"втор(?:ой|ая)\s+(?:(?:ямки|горки)\s+)?(?:ещё\s+)?нет",
+        str(s or "")))
+
+
+# ZAPRETY_PO_SMYSLU_V1 - marker
+
+
+# ── ALLIGATOR_OPYT_V1: ответ «где ты по Аллигатору» — на табло ──
+# Как фаза: ложится сразу, до проверок приказа. Нет полей — ничего.
+_ALLI_POLYA = ("аллигатор", "движение")
+
+
+def _alli_zapisat(tablo: str, args: dict) -> None:
+    try:
+        if not any(str((args or {}).get(p) or "").strip() for p in _ALLI_POLYA):
+            return
+        from hooks import load_trading_state, save_trading_state
+        t = load_trading_state()
+        bar = str((t.get("рынок") or {}).get("бар") or t.get("бар") or "")
+        z = {"бар": bar}
+        for p in _ALLI_POLYA:
+            z[p] = str((args or {}).get(p) or "").strip()
+        t.setdefault(tablo, {})["аллигатор"] = z
+        save_trading_state(t)
+        print(f"[АЛЛИГАТОР] {tablo}: {z['аллигатор'] or '—'} · {z['движение'] or '—'}")
+    except Exception as _e:
+        print(f"[АЛЛИГАТОР] не записался ({_e}) — приказ идёт как есть")
+
+
+# ALLIGATOR_OPYT_V1 - marker
+
+
+# ── LINII_A08_V1: кому рисовать линии Аллигатора на кадрах рук ──
+# KADR_BEZ_ALLIGATORA_V1 (03.10) задуман для первого уровня, а рисовал
+# без линий всем. На A08 идёт опыт «где ты по Аллигатору» (05.10) —
+# там линии нужны. Остальным — как было.
+_S_LINIYAMI = {"A08"}
+
+
+def _s_liniyami(slot) -> bool:
+    return _dzh(slot) or str(slot or "").strip().upper() in _S_LINIYAMI   # MESTA_PO_POMETKE_V1
+
+
+# LINII_A08_V1 - marker
+
+
+# ── GOROD_VEDYOT_A08_V1: места, где позицию после входа ведёт город ──
+_GOROD_VEDYOT_SLOTY = set()   # DVE_KNIGI_V2: житель ведёт сам, ограничений рук на A08 нет
+
+
+# GOROD_VEDYOT_A08_V1 - marker
+
+
+# ── CHEREZ_ETAZH_V1: ответ «через этаж» — на табло ────────────
+# Как фаза и Аллигатор: ложится сразу, до проверок приказа.
+_CHEREZ_POLYA = ("через_этаж_ход", "через_этаж", "ожидание")   # OZHIDANIE_V1
+
+
+def _cherez_zapisat(tablo: str, args: dict) -> None:
+    try:
+        if not any(str((args or {}).get(p) or "").strip() for p in _CHEREZ_POLYA):
+            return
+        from hooks import load_trading_state, save_trading_state
+        t = load_trading_state()
+        bar = str((t.get("рынок") or {}).get("бар") or t.get("бар") or "")
+        z = {"бар": bar}
+        for p in _CHEREZ_POLYA:
+            z[p] = str((args or {}).get(p) or "").strip()
+        t.setdefault(tablo, {})["через_этаж"] = z
+        save_trading_state(t)
+        print(f"[ЧЕРЕЗ ЭТАЖ] {tablo}: {z['через_этаж_ход'] or '—'} · "
+              f"{z['через_этаж'] or '—'} · ждёт {z['ожидание'] or '—'}")
+    except Exception as _e:
+        print(f"[ЧЕРЕЗ ЭТАЖ] не записался ({_e}) — приказ идёт как есть")
+
+
+# CHEREZ_ETAZH_V1 - marker
+
+
+# LYUBOY_ETAZH_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 (30.10): здесь была старая доливка — выброшена ══
+# Слово Шефа: «старые доливки выбросить, почистить совсем». Метка ниже
+# оставлена, чтобы старый патч не вписал её обратно.
+# DOLIVKA_DZHEMA_V1 - marker
+
+# DOLIVKA_STOP_GORODA_V1 - marker
+
+# ODNA_DOLIVKA_V1 - marker
+
+# OZHIDANIE_V1 - marker
+
+# DVE_KNIGI_V1 - marker
+
+# KNIGI_V_OTCHETE_V1 - marker
+
+# DVE_KNIGI_V2 - marker
+
+
+# ── HOD_MESYACA_V1: история хода месяца — дверь в Биржа/hod_mesyaca.py ──
+# Только A08 (модуль сам проверяет место). Не вышло — приказ идёт как есть.
+def _hm_vyzov(imya, *a, **k) -> str:
+    try:
+        import hod_mesyaca as _hm
+        return getattr(_hm, imya)(*a, **k) or ""
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] {imya} не вышло ({_e}) — приказ идёт как есть")
+        return ""
+
+
+# HOD_MESYACA_V1 - marker
+
+
+# ── TRI_STOPA_SMOTRI_V1: после трёх стопов — сперва посмотреть младший ──
+# Слово Шефа 16.10: «он не просто проговорить и продолжить после третьего
+# стопа должен, а посмотреть, что по этажам, — а там на H1 явно картина
+# маслом». Руки, которые показывают этаж, отмечают взгляд (какой этаж, на
+# каком баре). После трёх стопов подряд в одну сторону ENTER в ту же
+# сторону проходит дальше, только если на этом баре он открыл этаж ниже
+# рабочего. Не запрет торговать — запрет входить не глядя. Только A08.
+_ruki_bez_smotra = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_bez_smotra(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                         rabochiy_etazh=rabochiy_etazh,
+                         imya_zhitelya=imya_zhitelya)
+    if not _dzh(slot):
+        return r
+
+    def _s_otmetkoy(imya_ruki, fn):
+        def _f(args):
+            try:
+                a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+                e = str(a.get("этаж") or "").strip()
+                if imya_ruki == "rastyanut_volnu" and not e:
+                    e = "растяжка"
+                _chuzh = str(a.get("инструмент") or "").strip().upper()
+                if e and (not _chuzh or _chuzh == str(symbol).strip().upper()):
+                    _hm_vyzov("otmetit_vzglyad", slot, symbol, e)
+            except Exception:
+                pass
+            return fn(args)
+        return _f
+
+    for _imya in ("stol_na_etazhe", "pokazat_etazh", "rastyanut_volnu",
+                  "izmerit_volnu"):
+        if _imya in r:
+            r[_imya] = _s_otmetkoy(_imya, r[_imya])
+
+    # SVERKA_S_GORODOM_V1: рука сверки — сперва своё, потом город
+    r["sverka_s_gorodom"] = lambda args: (_hm_vyzov(
+        "sverka", slot, symbol, rabochiy_etazh, args) or "сверка не вышла")
+
+    if "otdat_prikaz" in r:
+        _orig = r["otdat_prikaz"]
+
+        def _otdat_smotri(args):
+            try:
+                a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+                if str(a.get("что") or "").upper().strip() == "ENTER":
+                    # SVERKA_S_GORODOM_V1 (слово Шефа 17.10): город не решает
+                    # за него — не отказываем, только отмечаем, смотрел ли он
+                    _pros = _hm_vyzov("prosba_posmotret", slot, symbol,
+                                      a.get("направление"))
+                    if _pros:
+                        print("[ТРИ СТОПА] вход без взгляда на младший — не держу, отмечаю")
+            except Exception as _e:
+                print(f"[ТРИ СТОПА] проверка не вышла ({_e}) — приказ идёт как есть")
+            return _orig(args)
+
+        r["otdat_prikaz"] = _otdat_smotri
+    return r
+
+
+# TRI_STOPA_SMOTRI_V1 - marker
+
+# SVERKA_S_GORODOM_V1 - marker
+
+
+# ── VEDENIE_SDELKI_V1: решение в сделке — с обоснованием ─────────
+# Слово Шефа 17.10: «город показывает, житель решает и обосновывает каждое
+# решение». Правило живёт в Биржа/vedenie_sdelki.py, здесь только дверь.
+# Не вышло — приказ идёт как есть.
+def _vs_vyzov(slot, symbol, tf, chto, args) -> str:
+    try:
+        import vedenie_sdelki as _vs
+        return _vs.obosnovanie(slot, symbol, tf, chto, args) or ""
+    except Exception as _e:
+        print(f"[ВЕДЕНИЕ] проверка не вышла ({_e}) — приказ идёт как есть")
+        return ""
+
+
+# VEDENIE_SDELKI_V1 - marker
+
+
+# ── MESTA_PO_POMETKE_V1: место уровня «продвинутый новичок» и его номер — по паспорту цеха ──
+def _dzh(slot) -> bool:
+    try:
+        import mesto_urovnya as _md
+        return _md.eto_mesto_urovnya(slot)
+    except Exception:
+        return str(slot or "").strip().upper() == "A08"
+
+
+def _nomer_r(slot):
+    try:
+        import mesto_urovnya as _md
+        return _md.nomer_mesta(slot)
+    except Exception:
+        try:
+            from nositel import magic_slota
+            return magic_slota("торговый_хаос", slot)
+        except Exception:
+            return None
+
+
+# ══ PASPORT_RUKI_V1 — ключ табло для руки приказа из паспорта цеха ══
+# Старый цех торговый_хаос — прежняя таблица (A06→brut, A07→avan,
+# A08→cons), как было. Другой цех — ключ из его паспорта (поле «ключ»
+# у места), тем же правилом, что у Совета и исполнителя: нет «ключа» —
+# имя места маленькими. Места нет ни в паспорте, ни мозга у него —
+# не торговое место, руки нет.
+def _klyuch_tablo(ceh, slot) -> str:
+    s = str(slot or "").strip()
+    c = str(ceh or "").strip()
+    if not c or c == "торговый_хаос":
+        return _TABLO_PO_SLOTU.get(s.upper(), "")
+    korn = _BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / c
+    try:
+        man = json.loads((korn / "manifest.json").read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[РУКА] паспорт цеха {c} не прочёлся ({e}) — руки приказа нет")
+        return ""
+    for z in man.get("слоты") or []:
+        if str(z.get("слот") or "").strip() == s:
+            return str(z.get("ключ") or s).strip().lower()
+    if (korn / "слоты" / s / "мозг.py").exists():
+        return s.lower()
+    return ""
+
+
+# PASPORT_RUKI_V1 - marker
+
+
+# ══ MESTO_BEZ_IMENI_V1 — поле места: новое имя, старые записи читаются ══
+def _pole_mesta(d, imya):
+    try:
+        import mesto_urovnya as _mu_p
+        return _mu_p.pole(d, imya)
+    except Exception:
+        return (d or {}).get(imya)
+
+
+# MESTO_BEZ_IMENI_V1 - marker
+
+
+# ══ POLKA_KLYUCHI_V1 — её полка: общие ключи в закладках, открытия пишутся ══
+_ruki_bez_polki = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_bez_polki(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                        rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    try:
+        import opyt_stola as _os
+        if not _os.vklyucheno(ceh, slot):
+            return r
+    except Exception:
+        return r
+
+    def _god_run():
+        try:
+            from hooks import load_trading_state as _lts
+            t = _lts() or {}
+            run = (t.get("прогон") or {}).get("id")
+            bar = str((t.get("рынок") or {}).get("бар") or "")
+            return (bar[:4] if run and bar[:4].isdigit() else None), run, bar
+        except Exception:
+            return None, None, ""
+
+    _vsp = r.get("vspomnit_po_yarlyku")
+    _my = r.get("moi_yarlyki")
+
+    def _vspomnit(args):
+        po = str((args or {}).get("по") or "")
+        kl = _os.klyuchi_v_tekste(po)
+        god, run, bar = _god_run()
+        verh = []
+        for k in kl:
+            verh.append(_os.kartochka(imya_zhitelya, k, god, run))
+            _os.otmetit_klyuch(ceh, slot, k, bar)
+            print(f"[КЛЮЧ] {slot} {imya_zhitelya}: открыт ключ «{k}» (бар {bar})")
+        niz = _vsp(args) if _vsp else ""
+        return ("\n\n".join(verh) + ("\n\n" if verh and niz else "") + (niz or "")) or niz
+
+    def _moi(args):
+        verh = _my(args) if _my else ""
+        god, run, _bar = _god_run()
+        og = _os.oglavlenie(imya_zhitelya, god, run)
+        if og:
+            verh = (verh + "\n\n=== ОБЩИЕ КЛЮЧИ ГОРОДА — ПОД НИМИ ТВОЙ ОПЫТ СДЕЛОК ===\n"
+                    + "\n".join(og)
+                    + "\nОткрыть — vspomnit_po_yarlyku, по: ключ.")
+        return verh
+
+    if _vsp:
+        r["vspomnit_po_yarlyku"] = _vspomnit
+    if _my:
+        r["moi_yarlyki"] = _moi
+    return r
+
+
+# POLKA_KLYUCHI_V1 - marker
+
+
+# ══ BIBLIOTEKA_MESTA_V1 — рука ключей на любом торговом месте ══
+# По ключу: книга места (литература любого, кто сидит) + её опыт сделок (карантин
+# года) + её память. Словарь: её три полки и библиотека места.
+_ruki_do_biblioteki = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_biblioteki(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                            rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    try:
+        import opyt_stola as _os
+    except Exception:
+        return r
+
+    def _god_run():
+        try:
+            from hooks import load_trading_state as _lts
+            t = _lts() or {}
+            run = (t.get("прогон") or {}).get("id")
+            bar = str((t.get("рынок") or {}).get("бар") or "")
+            return (bar[:4] if run and bar[:4].isdigit() else None), run, bar
+        except Exception:
+            return None, None, ""
+
+    def _dvig():
+        try:
+            from nositel import dusha_slota as _ds, _dvizhok as _dv
+            n = _ds(ceh, slot)
+            return _dv(n["носитель"]["папка"]) if n else None
+        except Exception:
+            return None
+
+    def _vspomnit(args):
+        a = args or {}
+        po = str(a.get("по") or "").strip()
+        if not po:
+            return "по чему вспоминать не сказано"
+        god, run, bar = _god_run()
+        verh = []
+        for k in _os.klyuchi_zaprosa(ceh, slot, po):
+            km = _os.kartochka_mesta(ceh, slot, k)
+            if km:
+                verh.append(km)
+            ko = _os.kartochka_opyta(imya_zhitelya, k, god, run)
+            if ko:
+                verh.append(ko)
+            _os.otmetit_klyuch(ceh, slot, k, bar)
+            print(f"[КЛЮЧ] {slot} {imya_zhitelya}: открыт ключ «{k}» (бар {bar})")
+        d = _dvig()
+        try:
+            niz = d.vspomnit(po, limit=int(a.get("сколько") or 6), o_chyom="работа") if d else ""
+        except Exception:
+            niz = ""
+        out = verh + ([f"=== ТВОЯ ПАМЯТЬ ПО «{po}» ===\n{niz}"] if niz else [])
+        return "\n\n".join(out) or (f"По «{po}» ничего нет — ни в библиотеке места, "
+                                      "ни у тебя. Решай без этого.")
+
+    def _moi(args):
+        d = _dvig()
+        s = ""
+        try:
+            s = d.polki_v_promt() if d and hasattr(d, "polki_v_promt") else ""
+        except Exception:
+            s = ""
+        lib = _os.klyuchi_mesta(ceh, slot)
+        if lib:
+            s += ("\n=== БИБЛИОТЕКА МЕСТА — литература любого, кто здесь сидит ===\n  "
+                  + ", ".join(lib) + "\nОткрыть — vspomnit_po_yarlyku, по: ключ.\n")
+        return s or "Ключей пока нет."
+
+    r["vspomnit_po_yarlyku"] = _vspomnit
+    r["moi_yarlyki"] = _moi
+    return r
+
+
+# BIBLIOTEKA_MESTA_V1 - marker
+
+
+# ══ D01_KAK_A06_V1 — выход по месту: стоп не двигают, «место» в сделке ══
+def _po_mestu(ceh, slot) -> bool:
+    try:
+        man = json.loads((_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+                          / "manifest.json").read_text(encoding="utf-8"))
+        for z in man.get("слоты") or []:
+            if str(z.get("слот") or "").strip().upper() == str(slot or "").strip().upper():
+                return str(z.get("выход") or "").strip().lower() == "по месту"
+    except Exception:
+        pass
+    return False
+
+
+_shema_do_mesta = shema
+
+
+def shema(rabochiy_etazh: str = "") -> list:   # noqa: F811
+    s = _shema_do_mesta(rabochiy_etazh)
+    for f in s:
+        fn = (f or {}).get("function") or {}
+        if fn.get("name") == "otdat_prikaz":
+            fn.setdefault("parameters", {}).setdefault("properties", {})["место"] = {
+                "type": "string",
+                "description": ("в сделке (HOLD, CLOSE, ADD): где ты оказалась после входа — "
+                                "откат, по ходу или перелом — и почему, по старшему этажу. "
+                                "На месте с выходом по месту — обязательно")}
+    return s
+
+
+_ruki_do_mesta = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_mesta(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                       rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if "otdat_prikaz" not in r or not _po_mestu(ceh, slot):
+        return r
+    _orig = r["otdat_prikaz"]
+
+    def _otdat_po_mestu(args):
+        a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+        chto = str(a.get("что") or "").upper().strip()
+        if chto == "MOVE_STOP":
+            print(f"[МЕСТО] ✗ {slot}: MOVE_STOP не принят — стоп не двигают")
+            return ("Приказ НЕ отдан: на этом месте стоп не двигают — ни код, ни ты. "
+                    "Он стоит там, где поставлен при входе (слово Шефа). Выход — по "
+                    "месту: откат — встречный разворотник с приседающим в заметном "
+                    "плюсе; по ходу и перелом — дивер против сделки на рабочем. "
+                    "Можно HOLD, CLOSE или ADD.")
+        if chto in ("HOLD", "CLOSE", "ADD"):
+            mesto = str(a.get("место") or "").strip()
+            gorod = ""
+            try:
+                import vedenie_sdelki as _vs
+                from hooks import load_trading_state as _lts
+                moy = _nomer_r(slot)
+                poz = next((p for p in ((_lts() or {}).get("positions") or [])
+                            if str(p.get("status") or "").upper() == "OPEN"
+                            and p.get("magic") == moy), None)
+                if poz:
+                    nap = "LONG" if str(poz.get("direction") or "").upper() == "LONG" else "SHORT"
+                    gorod = str(_vs._scenariy(slot, symbol, nap) or "")
+            except Exception:
+                poz = True
+            if poz and len(mesto) < 5:
+                print(f"[МЕСТО] ✗ {slot} {chto}: «место» не названо")
+                return ("Приказ НЕ отдан: назови «место» — где ты оказалась после входа: "
+                        "откат, по ходу или перелом, и почему (посмотри старший этаж: ход и "
+                        "дивер на нём)."
+                        + (f" Город считает: {gorod}." if gorod else "")
+                        + _vyhod_po_mestu_tekst(ceh, slot))   # VEDENIE_MASSHTAB_V3
+            if poz:
+                try:
+                    from hooks import load_trading_state as _lts2
+                    bar = str(((_lts2() or {}).get("рынок") or {}).get("бар") or "")
+                    p = (_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+                         / "слоты" / str(slot) / "данные" / "место_в_сделке.jsonl")
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    with open(p, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({"бар": bar, "что": chto, "её": mesto[:300],
+                                            "город": gorod}, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                print(f"[МЕСТО] {slot} {chto}: её «{mesto[:80]}» · город: {gorod or '—'}")
+        return _orig(args)
+
+    r["otdat_prikaz"] = _otdat_po_mestu
+    return r
+
+
+# D01_KAK_A06_V1 - marker
+
+
+# ══ OPYT_NA_STOLE_V1 — опыт на столе; сила входа пишется на входе ══
+_ruki_do_opyta_na_stole = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_opyta_na_stole(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                                rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    try:
+        import opyt_stola as _os
+    except Exception:
+        return r
+
+    def _god_run():
+        try:
+            from hooks import load_trading_state as _lts
+            t = _lts() or {}
+            run = (t.get("прогон") or {}).get("id")
+            bar = str((t.get("рынок") or {}).get("бар") or "")
+            return (bar[:4] if run and bar[:4].isdigit() else None), run, bar, t
+        except Exception:
+            return None, None, "", {}
+
+    def _v_sdelke(t):
+        moy = _nomer_r(slot)
+        return any(str(p.get("status") or "").upper() == "OPEN" and p.get("magic") == moy
+                   for p in (t.get("positions") or []))
+
+    def _napr_razvorota():
+        try:
+            from feed_source import bars as _bars
+            from williams_core import compute_alligator, vse_necron
+            bs, point = _bars(symbol, rabochiy_etazh, 300)
+            try:
+                from hooks import _tolko_zakrytye
+                bs = _tolko_zakrytye(bs)
+            except Exception:
+                pass
+            n = len(bs or [])
+            if n < 40:
+                return None
+            al = compute_alligator([b["high"] for b in bs], [b["low"] for b in bs], point=point)
+            nec = {x["i"]: x["сторона"] for x in vse_necron(
+                bs, al.get("jaw_series"), al.get("teeth_series"), al.get("lips_series"),
+                s=max(1, n - 6))}
+            for i in range(n - 1, n - 5, -1):
+                if nec.get(i) in ("BULL", "BEAR"):
+                    return "LONG" if nec[i] == "BULL" else "SHORT"
+        except Exception:
+            return None
+        return None
+
+    if "stol_na_etazhe" in r:
+        _stol0 = r["stol_na_etazhe"]
+
+        def _stol_s_opytom(args):
+            out = _stol0(args)
+            try:
+                a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+                tf = str(a.get("этаж") or "").strip().upper()
+                para = str(a.get("инструмент") or "").strip().upper()
+                if tf != str(rabochiy_etazh).upper() or (para and para != str(symbol).upper()):
+                    return out
+                god, run, bar, t = _god_run()
+                if _v_sdelke(t):
+                    L = _os.stroki_sdelki(imya_zhitelya, god, run)
+                else:
+                    napr = _napr_razvorota()
+                    if not napr:
+                        return out
+                    k, n = _os.sila_divera(symbol, rabochiy_etazh, napr)
+                    L = _os.stroki_vhoda(imya_zhitelya, k, n, god, run)
+                if L:
+                    print(f"[ОПЫТ] {slot} {imya_zhitelya}: на столе {len(L) - 2} строк опыта")
+                    return out + "\n\n" + "\n".join(L)
+            except Exception as e:
+                print(f"[ОПЫТ] на стол не лёг ({e})")
+            return out
+
+        r["stol_na_etazhe"] = _stol_s_opytom
+
+    if "otdat_prikaz" in r:
+        _prikaz0 = r["otdat_prikaz"]
+
+        def _prikaz_s_siloy(args):
+            otv = _prikaz0(args)
+            try:
+                a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+                if (str(a.get("что") or "").upper().strip() == "ENTER"
+                        and str(otv).startswith("Приказ отдан")):
+                    napr = str(a.get("направление") or "").upper().strip()
+                    k, n = _os.sila_divera(symbol, rabochiy_etazh, napr)
+                    _g, run, bar, _t = _god_run()
+                    _os.zapisat_vhod(ceh, slot, {"прогон": run, "бар": bar, "направление": napr,
+                                                 "k": k, "n": n, "откуда": "рука"})
+                    print(f"[ОПЫТ] {slot}: вход {napr} — дивер на {k} из {n} размеров")
+            except Exception:
+                pass
+            return otv
+
+        r["otdat_prikaz"] = _prikaz_s_siloy
+    return r
+
+
+# OPYT_NA_STOLE_V1 - marker
+
+
+# ══ OSMYSLENIE_EPIZODA_V1 — на входе рука запоминает её «почему» ══
+_ruki_do_pochemu = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_pochemu(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                         rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if "otdat_prikaz" not in r:
+        return r
+    _p0 = r["otdat_prikaz"]
+
+    def _prikaz_s_pochemu(args):
+        otv = _p0(args)
+        try:
+            a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+            if (str(a.get("что") or "").upper().strip() == "ENTER"
+                    and str(otv).startswith("Приказ отдан")):
+                import opyt_stola as _os
+                from hooks import load_trading_state as _lts
+                t = _lts() or {}
+                _os.zapisat_pochemu(ceh, slot, {
+                    "прогон": (t.get("прогон") or {}).get("id"),
+                    "бар": str((t.get("рынок") or {}).get("бар") or ""),
+                    "направление": str(a.get("направление") or "").upper().strip(),
+                    "почему": str(a.get("почему") or "")[:600]})
+        except Exception:
+            pass
+        return otv
+
+    r["otdat_prikaz"] = _prikaz_s_pochemu
+    return r
+
+
+# OSMYSLENIE_EPIZODA_V1 - marker
+
+
+# ══ TRI_SLOVA_V1 — в сделке: месяц на каждом пробуждении и одно из трёх слов ══
+# Слово Шефа 27.10: «про волны убрать пока, сейчас важно откат, продолжение,
+# перелом — чтобы эти три момента чётко уяснили, и каждый раз месяц сверяли»;
+# «на каждом пробудном»; «пусть переключает». Только места с выходом по месту
+# (паспорт цеха: «выход»: «по месту»). Перед входом — ничего нового.
+_TRI_GOROD_R = {"в откат": "откат", "по ходу": "продолжение",
+                "на переломе": "перелом", "после перелома": "продолжение"}
+_TRI_PRIMETY = (("откат", ("откат",)), ("продолжение", ("продолж", "по ходу")),
+                ("перелом", ("перелом",)))
+
+
+def _tri_slovo(s) -> str:
+    """Одно из трёх слов — то, что стоит раньше всех в её «месте»."""
+    t = str(s or "").lower().replace("ё", "е")
+    kand = []
+    for slovo, primety in _TRI_PRIMETY:
+        idx = [t.find(p) for p in primety if t.find(p) != -1]
+        if idx:
+            kand.append((min(idx), slovo))
+    return min(kand)[1] if kand else ""
+
+
+def _tri_mesyac_smotrela(slot, symbol, tf):
+    """(открывала ли месяц рукой на этом пробуждении, какой это этаж)."""
+    try:
+        import hod_mesyaca as _hm_t
+        e = _hm_t.starshiy(tf) or "MN1"
+        sm = _hm_t._yashchik_chitat(slot, symbol).get("смотрел") or {}
+        return (sm.get("бар") == _hm_t._bar_seychas()
+                and e in (sm.get("этажи") or [])), e
+    except Exception as _e_t:
+        print(f"[ТРИ СЛОВА] взгляд на месяц не проверился ({_e_t}) — не держу")
+        return True, "MN1"
+
+
+_ruki_do_trekh_slov = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_trekh_slov(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                            rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if "otdat_prikaz" not in r or not _po_mestu(ceh, slot):
+        return r
+    _p0 = r["otdat_prikaz"]
+
+    def _prikaz_tri_slova(args):
+        a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+        chto = str(a.get("что") or "").upper().strip()
+        if chto not in ("HOLD", "CLOSE", "ADD"):
+            return _p0(args)
+        try:
+            from hooks import load_trading_state as _lts_t
+            t = _lts_t() or {}
+            moy = _nomer_r(slot)
+            poz = next((p for p in (t.get("positions") or [])
+                        if str(p.get("status") or "").upper() == "OPEN"
+                        and p.get("magic") == moy), None)
+            run = (t.get("прогон") or {}).get("id")
+            bar = str((t.get("рынок") or {}).get("бар") or "")
+        except Exception as _e_t:
+            print(f"[ТРИ СЛОВА] позиция не нашлась ({_e_t}) — приказ идёт как есть")
+            return _p0(args)
+        if not poz:
+            return _p0(args)
+        mesto = str(a.get("место") or "").strip()
+        slovo = _tri_slovo(mesto)
+        mes = str(a.get("месяц") or "").strip()
+        vidit, e = _tri_mesyac_smotrela(slot, symbol, rabochiy_etazh)
+        net = []
+        if not vidit:
+            net.append(f"открыть месяц ({e}) рукой на этом пробуждении — pokazat_etazh "
+                       f"или stol_na_etazhe с этажом {e}")
+        if len(mes) < 20:
+            net.append("«месяц» — куда идёт ход месяца, что он делает сейчас (идёт, "
+                       "откатывается или ломается) и изменилось ли что-то с твоего входа")
+        if not slovo:
+            net.append("«место» — начни с одного из трёх слов: откат, продолжение или "
+                       "перелом — и скажи почему")
+        if net:
+            print(f"[ТРИ СЛОВА] ✗ {slot} {chto}: " + "; ".join(net))
+            return ("Приказ НЕ отдан: в сделке на каждом пробуждении сначала месяц, "
+                    "потом место. Не хватает: " + "; ".join(net)
+                    + ". Посмотри, назови и позови снова.")
+        napr = "LONG" if str(poz.get("direction") or "").upper() == "LONG" else "SHORT"
+        gorod = ""
+        try:
+            import vedenie_sdelki as _vs_t
+            gorod = _TRI_GOROD_R.get(str(_vs_t._scenariy(slot, symbol, napr) or ""), "")
+        except Exception:
+            pass
+        kl = f"{str(poz.get('opened_at') or '')[:16]}|{poz.get('entry')}"
+        f = (_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+             / "слоты" / str(slot) / "данные" / "три_слова.jsonl")
+        bylo = ""
+        try:
+            if f.exists():
+                for ln in f.read_text(encoding="utf-8").splitlines():
+                    try:
+                        z = json.loads(ln)
+                    except Exception:
+                        continue
+                    if z.get("сделка") == kl and z.get("прогон") == run:
+                        bylo = str(z.get("слово") or "")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with open(f, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"прогон": run, "бар": bar, "сделка": kl,
+                                     "что": chto, "слово": slovo, "город": gorod,
+                                     "место": mesto[:400], "месяц": mes[:600]},
+                                    ensure_ascii=False) + "\n")
+        except Exception as _e_z:
+            print(f"[ТРИ СЛОВА] не записалось ({_e_z})")
+        smena = (f" · смена: {bylo} → {slovo}" if bylo and bylo != slovo else "")
+        print(f"[ТРИ СЛОВА] {slot} {chto}: {imya_zhitelya or 'житель'} — {slovo} · город — {gorod or '—'}{smena}")
+        print(f"[МЕСЯЦ] {slot} {chto}: {imya_zhitelya or 'житель'} — «{mes[:160]}»")
+        if not mesto.lower().replace("ё", "е").startswith(slovo):
+            a["место"] = f"{slovo} — {mesto}"
+        return _p0(a)
+
+    r["otdat_prikaz"] = _prikaz_tri_slova
+    return r
+
+
+# TRI_SLOVA_V1 - marker
+
+
+# ══ VOLNY_KANON_V1 — рука albom_voln у места с «волны: по канону» ══
+# Слово Шефа 27.10: «нужна база с тем, как это выглядит фактически». Альбом
+# лежит у места (папка альбом_волн); рука отдаёт список или картинку.
+def _volny_po_kanonu(ceh, slot) -> bool:
+    try:
+        import json as _js_vk
+        man = _js_vk.loads((_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+                            / "manifest.json").read_text(encoding="utf-8"))
+        for z in man.get("слоты") or []:
+            if str(z.get("слот") or "").strip().upper() == str(slot or "").strip().upper():
+                return str(z.get("волны") or "").strip().lower() == "по канону"
+    except Exception:
+        pass
+    return False
+
+
+_ruki_do_alboma_voln = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_alboma_voln(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                             rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if not _volny_po_kanonu(ceh, slot):
+        return r
+
+    def _albom_voln(args):
+        try:
+            import volny_kanon as _vk
+            a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+            otv = _vk.albom(ceh, slot, a.get("номер"))
+            print(f"[АЛЬБОМ ВОЛН] {slot}: {str(a.get('номер') or 'список')}")
+            return otv
+        except Exception as e:
+            return f"Альбом не открылся: {e}"
+
+    r["albom_voln"] = _albom_voln
+    return r
+
+
+# VOLNY_KANON_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 — ADD не принимается: старых доливок больше нет ══
+# Слово Шефа 30.10: «старые доливки выбросить, почистить совсем». Новая
+# доливка (D03) откроет свою дверь отдельным патчем — поверх этой.
+_ruki_do_chistki_dolivok = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_chistki_dolivok(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                                 rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if "otdat_prikaz" not in r:
+        return r
+    _p0 = r["otdat_prikaz"]
+
+    def _prikaz_bez_dolivok(args):
+        a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+        if str(a.get("что") or "").upper().strip() == "ADD":
+            print(f"[ДОЛИВКА] {slot}: ADD не принят — доливок на этом месте нет")
+            return ("Приказ НЕ отдан: доливок на этом месте нет. Позицию держать — "
+                    "HOLD, закрыть — CLOSE.")
+        return _p0(args)
+
+    r["otdat_prikaz"] = _prikaz_bez_dolivok
+    return r
+
+
+# CHISTKA_DOLIVOK_V1 - marker
+
+
+# ══ DOLIVKA_FRAKTAL_V1 (31.10): здесь была доливка «по окну в продолжении» ══
+# Слово Шефа 31.10: доливка — по первому фракталу на два этажа ниже, во все
+# входы, ставит город (hooks, DOLIVKA_FRAKTAL_V1). Метка оставлена, чтобы
+# старый патч не вписал окно обратно.
+# DOLIVKA_D03_V1 - marker
+
+
+# DOLIVKA_FRAKTAL_V1 - marker
+
+
+# ══ UBORKA_0911_V1 (09.11): здесь были быстрые доливки (фрактал H1, вершина H4,
+# вторая доливка жителя) — удалены словом Шефа. Доливки — по канону главы 9, заново.
+# DOLIVKI_TRI_V1 - marker
+
+
+# ══ VEDENIE_MASSHTAB_V3 — подсказка руки про выход: на «ведение_масштаб» — новое правило ══
+def _vyhod_po_mestu_tekst(ceh, slot) -> str:
+    try:
+        man = json.loads((_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+                          / "manifest.json").read_text(encoding="utf-8"))
+        for z in man.get("слоты") or []:
+            if (str(z.get("слот") or "").strip().upper() == str(slot or "").strip().upper()
+                    and str(z.get("ведение_масштаб") or "").strip().lower() in ("да", "true", "1")):
+                return (" Выход не зависит от места: он по масштабу импульса — строка «ВЕДЕНИЕ "
+                        "ПО МАСШТАБУ ИМПУЛЬСА» («3 на 5» — CLOSE, иначе держать).")
+    except Exception:
+        pass
+    return (" От места зависит выход: откат — встречный разворотник с приседающим в заметном "
+            "плюсе; по ходу и перелом — дивер против сделки на рабочем.")
+
+
+# VEDENIE_MASSHTAB_V3 - marker
+
+
+# ══ VEDENIE_MASSHTAB_V4 — подсказка руки: откат — разворотник, импульс — масштаб ══
+def _vyhod_po_mestu_tekst(ceh, slot) -> str:   # noqa: F811
+    try:
+        man = json.loads((_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+                          / "manifest.json").read_text(encoding="utf-8"))
+        for z in man.get("слоты") or []:
+            if (str(z.get("слот") or "").strip().upper() == str(slot or "").strip().upper()
+                    and str(z.get("ведение_масштаб") or "").strip().lower() in ("да", "true", "1")):
+                return (" От места зависит выход: откат — встречный разворотник с приседающим "
+                        "в заметном плюсе; по ходу и перелом — по масштабу импульса (строка "
+                        "«ВЕДЕНИЕ ПО МАСШТАБУ ИМПУЛЬСА»: «3 на 5» — CLOSE, иначе держать).")
+    except Exception:
+        pass
+    return (" От места зависит выход: откат — встречный разворотник с приседающим в заметном "
+            "плюсе; по ходу и перелом — дивер против сделки на рабочем.")
+
+
+# VEDENIE_MASSHTAB_V4 - marker
+
+
+# ══ ODNA_SVECHA_V1 — на месте «две_свечи: нет» вход только по одиночному бару ══
+# Канон («Торговый хаос», 2-е изд., гл. 9): бар разворота — одна свеча: новый
+# край, закрытие в нужной половине, целиком за пастью Аллигатора. Слово Шефа
+# 09.11. ENTER и MOVE_ORDER принимаются, только если у города есть такой бар в
+# сторону сделки на баре решения или до трёх баров раньше. Посчитать не вышло
+# — приказ идёт как есть (сбой города — не её вина).
+def _odna_svecha_mesto(ceh, slot) -> bool:
+    try:
+        man = json.loads((_BIRZHA.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха" / str(ceh)
+                          / "manifest.json").read_text(encoding="utf-8"))
+        for z in man.get("слоты") or []:
+            if str(z.get("слот") or "").strip().upper() == str(slot or "").strip().upper():
+                return str(z.get("две_свечи") or "").strip().lower() == "нет"
+    except Exception:
+        pass
+    return False
+
+
+def _odin_razvorotnik(symbol, tf, napr):
+    """(есть ли, что сказать). Есть — одиночный бар разворота в сторону napr
+    на последнем закрытом баре или до трёх баров раньше. None — не посчиталось."""
+    try:
+        from feed_source import bars as _bars
+        from williams_core import compute_alligator, vse_necron
+        bs, point = _bars(symbol, tf, 300)
+        try:
+            from hooks import _tolko_zakrytye
+            bs = _tolko_zakrytye(bs)
+        except Exception:
+            pass
+        n = len(bs or [])
+        if n < 40:
+            return None, "мало баров"
+        al = compute_alligator([b["high"] for b in bs], [b["low"] for b in bs], point=point)
+        nado = "BULL" if napr == "LONG" else "BEAR"
+        vse = vse_necron(bs, al.get("jaw_series"), al.get("teeth_series"),
+                         al.get("lips_series"), s=max(1, n - 6))
+        for x in reversed(vse):
+            if x.get("i") is not None and x["i"] >= n - 4 and x.get("сторона") == nado:
+                return True, f"{nado} @ {x.get('цена')} ({str(x.get('дата') or '')[:16]})"
+        return False, f"за последние четыре бара одиночного {nado} нет"
+    except Exception as e:
+        return None, f"не посчиталось ({e})"
+
+
+_ruki_do_odnoy_svechi = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_odnoy_svechi(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                              rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if "otdat_prikaz" not in r or not _odna_svecha_mesto(ceh, slot):
+        return r
+    _p0 = r["otdat_prikaz"]
+
+    def _prikaz_odna_svecha(args):
+        a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+        chto = str(a.get("что") or "").upper().strip()
+        if chto not in ("ENTER", "MOVE_ORDER"):
+            return _p0(args)
+        napr = str(a.get("направление") or "").upper().strip()
+        if chto == "MOVE_ORDER" and napr not in ("LONG", "SHORT"):
+            try:
+                from hooks import load_trading_state as _lts_o
+                moy = _nomer_r(slot)
+                for p in ((_lts_o() or {}).get("positions") or []):
+                    if (str(p.get("status") or "").upper() in ("PENDING", "WATCHING")
+                            and (moy is None or p.get("magic") == moy)):
+                        napr = str(p.get("direction") or "").upper()
+                        break
+            except Exception:
+                pass
+        if napr not in ("LONG", "SHORT"):
+            return _p0(args)
+        est, chto_skazat = _odin_razvorotnik(symbol, rabochiy_etazh, napr)
+        if est is None:
+            print(f"[ОДНА СВЕЧА] ? {slot} {chto} {napr}: {chto_skazat} — приказ идёт как есть")
+            return _p0(args)
+        if not est:
+            print(f"[ОДНА СВЕЧА] ✗ {slot} {chto} {napr}: {chto_skazat}")
+            return ("Приказ НЕ отдан: бара разворота нет. По канону («Торговый хаос», 2-е "
+                    "изд., гл. 9) бар разворота — одна свеча: новый край, закрытие в "
+                    "нужной половине, целиком за пастью Аллигатора. Вход — только по "
+                    "такому бару в сторону сделки, на этом баре или до трёх баров "
+                    "раньше. Разворот двумя свечами на этом месте входом не считается. "
+                    "Город: " + chto_skazat + ". Посмотри строку РАЗВОРОТНЫЙ БАР на столе.")
+        print(f"[ОДНА СВЕЧА] ✓ {slot} {chto} {napr}: {chto_skazat}")
+        return _p0(args)
+
+    r["otdat_prikaz"] = _prikaz_odna_svecha
+    return r
+
+# ODNA_SVECHA_V1 - marker
+
+
+# ══ ZA_DIAPAZONOM_V1 — на месте «за_диапазоном: да» разворот только за пределами ══
+# Канон («Торговый хаос», 2-е изд., гл. 9): рынок вывел цену за рамки текущего
+# диапазона. Слово Шефа 09.11. Правило — Биржа/diapazon.py.
+_ruki_do_diapazona = ruki
+
+
+def ruki(symbol: str, ceh: str, slot: str, self_key: str,   # noqa: F811
+         dnevnik_fn=None, rabochiy_etazh: str = "H4",
+         imya_zhitelya: str = "") -> dict:
+    r = _ruki_do_diapazona(symbol, ceh, slot, self_key, dnevnik_fn=dnevnik_fn,
+                           rabochiy_etazh=rabochiy_etazh, imya_zhitelya=imya_zhitelya)
+    if "otdat_prikaz" not in r:
+        return r
+    try:
+        import diapazon as _dp
+        if str(slot or "").strip().upper() not in {s.upper() for c, s, _k in _dp.mesta()
+                                                   if c == str(ceh)}:
+            return r
+    except Exception:
+        return r
+    _p0 = r["otdat_prikaz"]
+
+    def _prikaz_za_diapazonom(args):
+        a = {str(k).strip().lower(): v for k, v in (args or {}).items()}
+        chto = str(a.get("что") or "").upper().strip()
+        if chto not in ("ENTER", "MOVE_ORDER"):
+            return _p0(args)
+        napr = str(a.get("направление") or "").upper().strip()
+        if chto == "MOVE_ORDER" and napr not in ("LONG", "SHORT"):
+            try:
+                from hooks import load_trading_state as _lts_d
+                moy = _nomer_r(slot)
+                for p in ((_lts_d() or {}).get("positions") or []):
+                    if (str(p.get("status") or "").upper() in ("PENDING", "WATCHING")
+                            and (moy is None or p.get("magic") == moy)):
+                        napr = str(p.get("direction") or "").upper()
+                        break
+            except Exception:
+                pass
+        if napr not in ("LONG", "SHORT"):
+            return _p0(args)
+        try:
+            import diapazon as _dp2
+            d = _dp2.proverit(symbol, rabochiy_etazh, napr)
+        except Exception as e:
+            d = {"за": None, "слова": f"не посчиталось ({e})"}
+        if d.get("за") is None:
+            print(f"[ДИАПАЗОН] ? {slot} {chto} {napr}: {d.get('слова')} — приказ идёт как есть")
+            return _p0(args)
+        if not d.get("за"):
+            print(f"[ДИАПАЗОН] ✗ {slot} {chto} {napr}: {d.get('слова')}")
+            return ("Приказ НЕ отдан: разворот внутри диапазона. По канону («Торговый хаос», "
+                    "2-е изд., гл. 9) у бара разворота ключ в том, что рынок вывел цену за "
+                    "рамки текущего диапазона. Ход, который ты разворачиваешь, должен уйти "
+                    "дальше начала прошлого размаха. Город: " + str(d.get("слова")) + ".")
+        print(f"[ДИАПАЗОН] ✓ {slot} {chto} {napr}: {d.get('слова')}")
+        return _p0(args)
+
+    r["otdat_prikaz"] = _prikaz_za_diapazonom
+    return r
+
+# ZA_DIAPAZONOM_V1 - marker

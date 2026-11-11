@@ -124,6 +124,7 @@ def _bars_from_terminal(symbol: str, tf: str, count: int) -> Tuple[list, Optiona
 # на H1 (94 566 баров) это превращало прогон в час+ без единого
 # срабатывания (сито-1 не успевало закончить сканирование истории).
 _FOLDER_BARS_CACHE: dict = {}
+_BM_SREZ: dict = {}   # BYSTRAYA_MASHINA_V1: (файл, этаж, момент) → сколько баров закрыто
 
 
 def _bars_from_folder(symbol: str, tf: str, count: int) -> Tuple[list, Optional[float]]:
@@ -159,11 +160,38 @@ def _bars_from_folder(symbol: str, tf: str, count: int) -> Tuple[list, Optional[
     except Exception:
         moment = ""
     if moment:
-        do_momenta = [b for b in bars
-                      if istoriya.zakryt_li(b.get("date", ""), tf, moment)]
-        bars = do_momenta or []
-        if not bars:
+        # BYSTRAYA_MASHINA_V1: история по порядку — границу «закрыто к моменту»
+        # ищем делением пополам и запоминаем на этот момент. Не по порядку —
+        # по-старому, перебором.
+        n = _BM_SREZ.get((key, str(tf).upper(), moment))
+        if n is None:
+            if bars and str(bars[0].get("date", "")) <= str(bars[-1].get("date", "")):
+                lo, hi = 0, len(bars)
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    if istoriya.zakryt_li(bars[mid].get("date", ""), tf, moment):
+                        lo = mid + 1
+                    else:
+                        hi = mid
+                n = lo
+            else:
+                n = None
+            if n is not None:
+                if len(_BM_SREZ) > 20000:
+                    _BM_SREZ.clear()
+                _BM_SREZ[(key, str(tf).upper(), moment)] = n
+        if n is None:
+            do_momenta = [b for b in bars
+                          if istoriya.zakryt_li(b.get("date", ""), tf, moment)]
+            bars = do_momenta or []
+            if not bars:
+                return [], None
+            tail = bars[-count:] if count and len(bars) > count else bars
+            return tail, point
+        if n <= 0:
             return [], None
+        s0 = max(0, n - count) if count else 0
+        return bars[s0:n], point
 
     tail = bars[-count:] if count and len(bars) > count else bars
     return tail, point
@@ -212,3 +240,5 @@ def bars(symbol: str, tf: str, count: int = 2000) -> Tuple[list, Optional[float]
     return _bars_from_terminal(symbol, tf, count)
 
 # MASHINA_VREMENI_V1 - marker
+
+# BYSTRAYA_MASHINA_V1 - marker

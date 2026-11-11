@@ -114,19 +114,52 @@ def _sobrat_dushu(stol: dict, s_domom: bool = False) -> str:
     # ГОЛОС 2 — МЕТКИ. Нажитое. ВОТ ЭТО оплачено, и вот здесь голос
     # «твои же выводы» — правда. Поле ОТКУДА даёт разный тон: то, что
     # сказал рынок, звучит иначе, чем то, чему учили.
-    metki = stol.get("метки") or []
+    # STOL_RAZNOE_V1: на столе — РАЗНЫЕ уроки, по одному от темы (выбор
+    # делает движок). ARHIV_S_KLYUCHOM_V1: её выводы и записи города
+    # различимы — город стоит отдельным абзацем, не выдаётся за её вывод.
+    metki_vse = stol.get("метки") or []
+    metki = [m for m in metki_vse if (m.get("откуда") or "").strip() != "прогон"]
+    zametki_goroda = [m for m in metki_vse if (m.get("откуда") or "").strip() == "прогон"]
+
+    def _golos_i_hvost(m):
+        otk = (m.get("откуда") or "").strip()
+        golos = {
+            "рынок":   "рынок сказал",
+            "учёба":   "чему тебя учили",
+            "учитель": "поправил учитель",
+            "работа":  "вывод с работы",
+            "сам":     "сам(а) решил(а)",
+        }.get(otk, f"вынес(ла) как {otk}" if otk else "вынес(ла)")
+        # METKI_KLYUCHI_V2: от кого и ключи — видны при метке
+        _ot = (m.get("от кого") or "").strip()
+        _kl = ", ".join(m.get("ярлыки") or [])
+        _hv = (f" · от: {_ot}" if _ot else "") + (f" · ключи: {_kl}" if _kl else "")
+        return golos, _hv
+
     if metki:
         L.append("\nЧТО ТЫ НАЖИЛ САМ — выводы, которых при рождении не "
-                 "было. Ты их заработал:")
+                 "было. Ты их заработал. На столе — по одному уроку от "
+                 "каждой темы; остальное твоё лежит у тебя и поднимается "
+                 "по ключу:")
         for m in metki:
-            otk = (m.get("откуда") or "").strip()
-            golos = {
-                "рынок":  "рынок сказал",
-                "учёба":  "чему тебя учили",
-            }.get(otk, f"вынес(ла) как {otk}" if otk else "вынес(ла)")
-            L.append(f"  • [{golos}] {m.get('текст','')}")
+            golos, _hv = _golos_i_hvost(m)
+            L.append(f"  • [{golos}{_hv}] {m.get('текст','')}")
         L.append("Это твоё, оплаченное. Хочешь идти против — иди, "
                  "но знай, что идёшь против себя же.")
+    if zametki_goroda:
+        L.append("\nЧТО ЗА ТОБОЙ ЗАМЕТИЛ ГОРОД — записи прогонов, не твои "
+                 "выводы. Что с этим делать, решаешь ты:")
+        for m in zametki_goroda:
+            _kl = ", ".join(m.get("ярлыки") or [])
+            L.append(f"  • [прогон{(' · ключи: ' + _kl) if _kl else ''}] "
+                     f"{m.get('текст','')}")
+
+    # METKI_KLYUCHI_V2: ТВОИ ЗАКЛАДКИ — карта его памяти одной строкой.
+    _zakl = stol.get("закладки") or []
+    if _zakl:
+        L.append("\nТВОИ ЗАКЛАДКИ — ключи к твоей памяти. Что не на столе — "
+                 "лежит у тебя и достаётся по ключу (MEMORY_REQUEST: <ключ>): "
+                 + " · ".join(_zakl))
 
     # ГОЛОС 3 — МАЯКИ. Момент. Ещё не вывод (Гл.4.4: один вывод — не опыт).
     chernoviki = stol.get("черновики") or []
@@ -174,6 +207,13 @@ def dusha_slota(ceh: str, slot: str, s_domom: bool = False) -> dict:
         print("[МОСТ] ⚠️  в dvizhok нет nakryt_stol_chisto — "
               "нужен patch_dvizhok_stol_chisto_vyvod_v1")
         return {"носитель": n, "душа": "", "magic": n.get("magic")}
+
+    # METKI_KLYUCHI_V2: карта закладок — все его ключи одной строкой.
+    # Метки не на столе лежат у него же; ключ — дорога к ним.
+    try:
+        stol["закладки"] = [y for y, _ in (d.yarlyki() or [])][:30]
+    except Exception:
+        pass
 
     return {
         "носитель": n,
@@ -462,7 +502,9 @@ def zapisat_vyvod(magic, vyvod: str, pnl_r=None, limit: int = 10) -> dict:
     try:
         res = d.dopisat_vyvod(vyvod, limit=limit,
                               pattern=_klyuch_trader(vyvod),
-                              otkuda="работа")  # CHAT_KNOPKI_I_OSMYSLIT_V1: было «рынок» — а рабочими считаются «работа» и «факт», и собственные выводы трейдера рабочим поиском НЕ находились   # DVER_V_METKI_V1: голос вывода назван   # YAKORYA_DVA_YARUSA_V1
+                              otkuda="работа",
+                              yarlyki=_KLYUCHI_SDELOK.get(_klyuch_trader(vyvod)),
+                              ot_kogo="рынок")   # ARHIV_S_KLYUCHOM_V1  # CHAT_KNOPKI_I_OSMYSLIT_V1: было «рынок» — а рабочими считаются «работа» и «факт», и собственные выводы трейдера рабочим поиском НЕ находились   # DVER_V_METKI_V1: голос вывода назван   # YAKORYA_DVA_YARUSA_V1
     except AttributeError:
         print("[МОСТ] ⚠️  в dvizhok нет dopisat_vyvod — "
               "нужен patch_dvizhok_stol_chisto_vyvod_v1")
@@ -837,7 +879,8 @@ def ubrat_yarkoe(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def otmetit_yarkim_slotom(ceh: str, slot: str, tekst: str, otkuda: str = "работа") -> dict:
+def otmetit_yarkim_slotom(ceh: str, slot: str, tekst: str, otkuda: str = "работа",
+                          yarlyki=None, ot_kogo: str = "") -> dict:   # METKI_KLYUCHI_V2
     """Житель, сидящий в слоте, сам решил — это держится дольше обычного."""
     try:
         n = dusha_slota(ceh, slot)
@@ -846,7 +889,8 @@ def otmetit_yarkim_slotom(ceh: str, slot: str, tekst: str, otkuda: str = "раб
         d = _dvizhok(n["носитель"]["папка"])
         if d is None:
             return {"дописано": False, "причина": "движок недоступен"}
-        return d.otmetit_yarkim(tekst, otkuda=otkuda)
+        return d.otmetit_yarkim(tekst, otkuda=otkuda,   # METKI_KLYUCHI_V2
+                                yarlyki=yarlyki, ot_kogo=ot_kogo)
     except Exception as e:
         print(f"[МОСТ] ⚠️  ярким не отметилось ({ceh}/{slot}): {e}")
         return {"дописано": False, "причина": str(e)}
@@ -883,6 +927,22 @@ _LOVUSHKI_PROGONA = {
                "попытка войти без приседающего в окне"),
 }
 _TREYDER_SLOT = {"BRUT": "A06", "AVANTURIST": "A07", "KONSERVATOR": "A08"}
+
+# ARHIV_S_KLYUCHOM_V1: уроки, которые пишет ГОРОД, — с ключами. Раньше
+# ключи были только у того, что житель осмыслил с Шефом, а записи
+# прогонов и сделок ложились голым текстом и по ключу не находились.
+_KLYUCHI_LOVUSHEK = {
+    "ЭКСТРЕМУМ":  ["край", "откат", "прогон"],
+    "СВОИ ЧИСЛА": ["свои числа", "дивергенция", "прогон"],
+    "ОДНА ЯМА":   ["одна яма", "ao", "прогон"],
+    "ПРИСЕД":     ["приседающий", "прогон"],
+}
+_KLYUCHI_SDELOK = {
+    "трейдер_минус_против_ветра":      ["сделка", "стоп", "против компаса"],
+    "трейдер_минус_по_системе":        ["сделка", "стоп"],
+    "трейдер_плюс_по_ветру":           ["сделка", "плюс"],
+    "трейдер_плюс_удача_против_ветра": ["сделка", "против компаса", "удача"],
+}
 
 
 def _raz(n: int) -> str:
@@ -995,7 +1055,9 @@ def sledy_progona(papka, progon_id: str = "", zakrytiya=None,
                 klyuch, fraza = _LOVUSHKI_PROGONA[k]
                 try:
                     d.dopisat_vyvod(f"Прогон {opis}: {fraza} — город поймал "
-                                    f"{_raz(v)}.", pattern=klyuch, otkuda="прогон")
+                                    f"{_raz(v)}.", pattern=klyuch, otkuda="прогон",
+                                    yarlyki=_KLYUCHI_LOVUSHEK.get(k),
+                                    ot_kogo="город")   # ARHIV_S_KLYUCHOM_V1
                     mayakov += 1
                 except Exception as e:
                     print(f"[СЛЕД] ⚠️  маяк не лёг ({imya}, {k}): {e}")
@@ -1006,3 +1068,235 @@ def sledy_progona(papka, progon_id: str = "", zakrytiya=None,
     return out
 
 # SKVOZNAYA_PAMYAT_V1 - marker
+
+# METKI_KLYUCHI_V2 - marker
+
+# ARHIV_S_KLYUCHOM_V1 - marker
+
+
+# ══ UROKI_PROGONOV_V1 — след прогона ложится и в новом цехе; уроки жителю ══
+# Раньше sledy_progona звали без цеха (всегда торговый_хаос) и знали трейдеров
+# только по трём старым именам: у мест нового цеха (D01…) след не ложился вовсе.
+_sledy_progona_do_urokov = sledy_progona
+
+
+def sledy_progona(papka, progon_id: str = "", zakrytiya=None,   # noqa: F811
+                  ceh: str = "") -> list:
+    import json as _js_u
+    p = Path(papka)
+    if not ceh:
+        ceh = p.parent.parent.name if p.parent.name == "прогоны" else "торговый_хаос"
+    try:   # в журнале трейдер нового цеха записан именем места (D01…)
+        _man = _js_u.loads((_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / ceh
+                            / "manifest.json").read_text(encoding="utf-8"))
+        for _s in _man.get("слоты") or []:
+            _sl = str(_s.get("слот") or "").strip()
+            if _sl:
+                _TREYDER_SLOT.setdefault(_sl.upper(), _sl)
+    except Exception as _e_u:
+        print(f"[СЛЕД] паспорт цеха {ceh} не прочёлся ({_e_u})")
+    out = list(_sledy_progona_do_urokov(papka, progon_id, zakrytiya, ceh) or [])
+    try:
+        import uroki_progonov as _up
+        out += _up.zapisat_iz_progona(p, progon_id, zakrytiya, ceh)
+    except Exception as _e_u2:
+        out.append(f"уроки не легли — {_e_u2}")
+    return out
+
+
+# UROKI_PROGONOV_V1 - marker
+
+
+# ══ SCHET_V1 — в конце прогона в отчёт: счёт места в GRD ══
+_sledy_progona_do_scheta = sledy_progona
+
+
+def sledy_progona(papka, progon_id: str = "", zakrytiya=None, ceh: str = "") -> list:   # noqa: F811
+    out = list(_sledy_progona_do_scheta(papka, progon_id, zakrytiya, ceh) or [])
+    try:
+        p = Path(papka)
+        c = ceh or (p.parent.parent.name if p.parent.name == "прогоны" else "торговый_хаос")
+        import schet as _sch
+        out += _sch.dopisat_v_otchet(p, c)
+    except Exception as e:
+        out.append(f"счёт в отчёт не лёг — {e}")
+    return out
+
+
+# SCHET_V1 - marker
+
+
+# ══ OPYT_STOLA_V1 — такт: в конце прогона опыт стола жителю домой ══
+_sledy_progona_do_opyta = sledy_progona
+
+
+def sledy_progona(papka, progon_id: str = "", zakrytiya=None, ceh: str = "") -> list:   # noqa: F811
+    out = list(_sledy_progona_do_opyta(papka, progon_id, zakrytiya, ceh) or [])
+    try:
+        p = Path(papka)
+        c = ceh or (p.parent.parent.name if p.parent.name == "прогоны" else "торговый_хаос")
+        import opyt_stola as _os
+        out += _os.zapisat_iz_progona(p, c)
+    except Exception as e:
+        out.append(f"опыт стола не лёг — {e}")
+    return out
+
+
+# OPYT_STOLA_V1 - marker
+
+
+# ══ TRI_POLKI_V1 — на работе вместо строки закладок — оглавление трёх полок ══
+_dusha_slota_do_polok = dusha_slota
+
+
+def dusha_slota(ceh: str, slot: str, s_domom: bool = False) -> dict:   # noqa: F811
+    r = _dusha_slota_do_polok(ceh, slot, s_domom)
+    try:
+        if r and r.get("стол") is not None:
+            d = _dvizhok(r["носитель"]["папка"])
+            if d is not None and hasattr(d, "polki_v_promt"):
+                dush = r.get("душа") or ""
+                i = dush.find("\nТВОИ ЗАКЛАДКИ")
+                if i >= 0:
+                    j = dush.find("\n", i + 1)
+                    dush = dush[:i] + (dush[j:] if j >= 0 else "")
+                og = d.polki_v_promt()
+                r["душа"] = dush + ("\n" + og if og else "")
+    except Exception as e:
+        print(f"[ПОЛКИ] оглавление в душу не легло ({e})")
+    return r
+
+
+# TRI_POLKI_V1 - marker
+
+
+# ══ OPYT_NA_STOLE_V1 — на работе: все его должности и где он сейчас ══
+_dusha_slota_do_postov = dusha_slota
+
+
+def dusha_slota(ceh: str, slot: str, s_domom: bool = False) -> dict:   # noqa: F811
+    r = _dusha_slota_do_postov(ceh, slot, s_domom)
+    try:
+        if r and r.get("душа") is not None:
+            d = _dvizhok(r["носитель"]["папка"])
+            if d is not None and hasattr(d, "moi_posty_v_promt"):
+                s = d.moi_posty_v_promt(f"место {slot} (цех {ceh})")
+                if s and "ТВОИ ДОЛЖНОСТИ СЕЙЧАС" not in r["душа"]:
+                    r["душа"] = r["душа"] + "\n" + s
+    except Exception as e:
+        print(f"[ДОЛЖНОСТИ] в душу не легли ({e})")
+    return r
+
+
+# OPYT_NA_STOLE_V1 - marker
+
+
+# ══ ARHIVARIUS_V1 — в конце прогона: картотека жителей (архивариус Биржи) ══
+_sledy_progona_do_arhivariusa = sledy_progona
+
+
+def sledy_progona(papka, progon_id: str = "", zakrytiya=None, ceh: str = "") -> list:   # noqa: F811
+    out = list(_sledy_progona_do_arhivariusa(papka, progon_id, zakrytiya, ceh) or [])
+    try:
+        import arhivarius as _arh
+        p = Path(papka)
+        c = ceh or (p.parent.parent.name if p.parent.name == "прогоны" else "торговый_хаос")
+        out += _arh.razobrat_progon(p, c)
+    except Exception as e:
+        out.append(f"картотека не легла — {e}")
+    return out
+
+
+# ARHIVARIUS_V1 - marker
+
+
+# ══ OPYT_ZAMOROZKA_V1 — экзамен: на месте «опыт_заморожен» опыт после прогона не пишется ══
+# Слово Шефа 07.11. Всё, что конец прогона положил бы в дом жителя (работа,
+# опыт, метки, маяки), откатывается к тому, что было до прогона. Отчёт и
+# счёт — как обычно. Паспорт жителя не трогается.
+_sledy_do_zamorozki = sledy_progona
+_ZAM_PAPKI = ("опыт", "работа", "2_метки", "3_маяки")
+
+
+def _zamorozhennye_doma(papka, ceh) -> list:
+    import json as _jz
+    out = []
+    try:
+        man = _jz.loads((_REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / ceh
+                         / "manifest.json").read_text(encoding="utf-8"))
+        zam = {str(z.get("слот") or ""): z for z in man.get("слоты") or []
+               if str(z.get("опыт_заморожен") or "").strip().lower() in ("да", "true", "1")}
+        if not zam:
+            return out
+        try:
+            sloty = {str(_jz.loads(s).get("слот") or "").upper()
+                     for s in (Path(papka) / "места.jsonl").read_text(encoding="utf-8").splitlines()
+                     if s.strip()}
+        except Exception:
+            sloty = {s.upper() for s in zam}
+        for sl in sorted(zam):
+            if sl.upper() not in sloty:
+                continue
+            n = dusha_slota(ceh, sl)
+            if n and n.get("носитель", {}).get("папка"):
+                out.append((sl, n["носитель"].get("имя") or "", Path(n["носитель"]["папка"])))
+    except Exception as e:
+        print(f"[ОПЫТ ЗАМОРОЖЕН] ⚠️  места не прочлись ({e}) — опыт пишется как обычно")
+    return out
+
+
+def _snimok(dom: Path) -> dict:
+    s = {}
+    for sub in _ZAM_PAPKI:
+        d = dom / sub
+        if d.is_dir():
+            for f in d.rglob("*"):
+                if f.is_file():
+                    try:
+                        s[f] = f.read_bytes()
+                    except Exception:
+                        pass
+    return s
+
+
+def _otkat(dom: Path, snimok: dict) -> int:
+    n = 0
+    for sub in _ZAM_PAPKI:
+        d = dom / sub
+        if d.is_dir():
+            for f in list(d.rglob("*")):
+                if f.is_file() and f not in snimok:
+                    try:
+                        f.unlink()
+                        n += 1
+                    except Exception:
+                        pass
+    for f, b in snimok.items():
+        try:
+            if not f.is_file() or f.read_bytes() != b:
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_bytes(b)
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
+def sledy_progona(papka, progon_id: str = "", zakrytiya=None, ceh: str = "") -> list:   # noqa: F811
+    p = Path(papka)
+    c = ceh or (p.parent.parent.name if p.parent.name == "прогоны" else "торговый_хаос")
+    doma = _zamorozhennye_doma(p, c)
+    snimki = [(sl, imya, dom, _snimok(dom)) for sl, imya, dom in doma]
+    try:
+        out = list(_sledy_do_zamorozki(papka, progon_id, zakrytiya, ceh) or [])
+    finally:
+        for sl, imya, dom, sn in snimki:
+            k = _otkat(dom, sn)
+            print(f"[ОПЫТ ЗАМОРОЖЕН] {imya} ({sl}): прогон в опыт не лёг — "
+                  f"откатила {k} файлов (экзамен)")
+    for sl, imya, dom, sn in snimki:
+        out.append(f"{imya}: опыт заморожен на месте {sl} — из этого прогона в дом ничего не легло")
+    return out
+
+
+# OPYT_ZAMOROZKA_V1 - marker

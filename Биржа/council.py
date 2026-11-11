@@ -167,10 +167,16 @@ _EXECUTOR = ("A09", "контора", "исполнитель", "run_executor")
 # приходят от того же сканера, что и сами трейдеры, — один источник.
 
 
-def _steret_verdikt(slot: str, prichina: str = ""):
+def _steret_verdikt(slot: str, prichina: str = "",
+                    ceh_id: str = _CEH_TORGOVYY):   # PASPORT_KONTORY_V1
     """Стирает вердикт упавшего трейдера со стола. Он молчал — значит
     REJECTED. Старый вердикт с прошлого бара торговать НЕ ИМЕЕТ ПРАВА."""
-    key = _stol_klyuchi().get(slot)
+    # PASPORT_KONTORY_V1: ключ ищем в цехе упавшего, а не всегда в
+    # старом — иначе у нового цеха мёртвый торговал бы. Контора (исполнитель)
+    # не трейдер: стирать у неё нечего, как и раньше.
+    if ceh_id == "контора":
+        return
+    key = _stol_klyuchi(ceh_id).get(slot)
     if not key:
         return
     try:
@@ -225,7 +231,7 @@ def _call(ceh_id: str, slot: str, fn_name: str, **kw) -> dict:
         _res = {"ok": False, "error": f"{fn_name}: {e}"}
 
     if not (_res or {}).get("ok"):
-        _steret_verdikt(slot, str((_res or {}).get("error", "сбой")))
+        _steret_verdikt(slot, str((_res or {}).get("error", "сбой")), ceh_id)
 
     return _res
 
@@ -417,20 +423,24 @@ def _uslyshat_nablyudenie(slot: str, symbol: str, timeframe: str,
 # край, вторая закрылась в другую сторону. Склеиваем их в одну
 # (открытие первой, закрытие второй, общий край) и проверяем той же
 # формулой разворотника.
-def _dve_svechi(bs, al) -> str:
+def dve_svechi_fakt(bs, al) -> dict:
+    """DVE_SVECHI_STOL_V1: тот же расчёт, что будит (DVE_SVECHI_V1), но
+    отдаёт ФАКТ — сторону, цену, края склеенного бара и даты обеих
+    свечей. Им же пользуется стол: правило одно, будильник и стол
+    считают одинаково. Нет разворота двумя свечами — пустой словарь."""
     try:
         from williams_core import detect_necron_bar as _dnb
         if not bs or len(bs) < 10:
-            return ""
+            return {}
         J = list(al.get("jaw_series") or [])
         T = list(al.get("teeth_series") or [])
         L = list(al.get("lips_series") or [])
         if len(J) < len(bs) or len(T) < len(bs) or len(L) < len(bs):
-            return ""
+            return {}
         J, T, L = J[:len(bs)], T[:len(bs)], L[:len(bs)]
         # первая из двух сама была разворотником — её уже будили
         if _dnb(bs[:-1], J[:-1], T[:-1], L[:-1]).get("direction"):
-            return ""
+            return {}
         a, b = bs[-2], bs[-1]
         g = {"date": b.get("date"), "open": a["open"],
              "high": max(a["high"], b["high"]),
@@ -439,13 +449,22 @@ def _dve_svechi(bs, al) -> str:
         r = _dnb(bs[:-2] + [g], J[:-2] + [J[-1]], T[:-2] + [T[-1]],
                  L[:-2] + [L[-1]])
         if not r.get("direction"):
-            return ""
-        return (f"разворот двумя свечами {str(a.get('date'))[:16]} + "
-                f"{str(b.get('date'))[:16]}: {r['direction']} @ "
-                f"{r['price']} — считай их одним разворотником")
+            return {}
+        return {"сторона": r["direction"], "цена": r["price"],
+                "high": g["high"], "low": g["low"],
+                "с": str(a.get("date") or "")[:16],
+                "по": str(b.get("date") or "")[:16]}
     except Exception as _e_dv:
         print(f"[КЛЮЧ] разворот двумя свечами не посчитался: {_e_dv}")
+        return {}
+
+
+def _dve_svechi(bs, al) -> str:
+    f = dve_svechi_fakt(bs, al)     # DVE_SVECHI_STOL_V1: одно правило
+    if not f:
         return ""
+    return (f"разворот двумя свечами {f['с']} + {f['по']}: {f['сторона']} @ "
+            f"{f['цена']} — считай их одним разворотником")
 
 
 def _povod_vzglyada(symbol: str, timeframe: str) -> str:
@@ -541,8 +560,11 @@ def _klyuch_probuzhdeniya(symbol: str, timeframe: str,
         # решала, откроет ли человек график. Отбор числами закрыт
         # шестью замерами — ворот здесь больше нет.
         _vz = _povod_vzglyada(symbol, timeframe)
+        _mlad = _povody_mladshego(symbol, timeframe, slot, t)   # VEDENIE_PO_ZAPISKE_V2
         if _vz:
-            return {"будим": True, "почему": _vz}
+            return {"будим": True, "почему": _vz + (f"; {_mlad}" if _mlad else "")}
+        if _mlad:
+            return {"будим": True, "почему": _mlad}
         rodilas = str(tch.get("rodilas_na_bare") or "")
         if tch.get("alive") and bar_goroda and rodilas == bar_goroda                 and not tch.get("barov_s_tochki"):
             return {"будим": False,      # KLYUCH_TOLKO_NEKRON_V1
@@ -590,8 +612,8 @@ def _klyuch_probuzhdeniya(symbol: str, timeframe: str,
             _zsym = (_z.get("symbol") or "").strip().upper()
             if not (_zsym and sym and _zsym != sym):
                 return {"будим": True,
-                        "почему": f"сделка закрылась: {_z.get('причина')} "
-                                  f"@ {_z.get('выход')}"}
+                        "почему": (f"{'город по фактам вышел бы здесь (сам не торгует, позиция твоя)' if _z.get('книга') == 'города' else 'сделка закрылась'}: "   # DVE_KNIGI_V2
+                                   f"{_z.get('причина')} @ {_z.get('выход')}")}
 
         # KONEC_VOLNY_1_V1: второе СОБЫТИЕ, ради которого всё. Волна 1
         # от точки кончилась — значит есть от чего ждать откат. Слово
@@ -651,7 +673,8 @@ def _klyuch_probuzhdeniya(symbol: str, timeframe: str,
 def wake_council(symbol: str = "", timeframe: str = "",
                  on_event: Optional[Callable] = None,
                  window=None, point=None,
-                 ceh_id: str = _CEH_TORGOVYY) -> dict:
+                 ceh_id: str = _CEH_TORGOVYY,
+                 tolko: str = "", uchastniki=None) -> dict:
     """
     ОЧЕРЁДНОСТЬ РАБОТЫ на текущем баре. Имя осталось прежним, чтобы
     кабинет и тестер звали как звали, но собрания больше нет.
@@ -701,6 +724,11 @@ def wake_council(symbol: str = "", timeframe: str = "",
     # если двое работают одним инструментом на одном этаже, второй
     # раз не судим.
     _za_stolom = _treydery(ceh_id)
+    # UCHASTNIKI_PROGONA_V1: в прогоне за столом — только те, кого
+    # отметил Шеф. Не отмеченная сидит на месте, но её рынок не
+    # судим и её не будим.
+    if uchastniki:
+        _za_stolom = [z for z in _za_stolom if z[2] in uchastniki]
     _pary = {}
     for _aid, _c, _slot, _fn, _pre in _za_stolom:
         _p = _para_slota(ceh_id, _slot)   # UBRAT_CHETVERTOGO_V1
@@ -741,18 +769,19 @@ def wake_council(symbol: str = "", timeframe: str = "",
     # Их работу делает Биржа/stol.py — каждый трейдер зовёт его сам,
     # внутри своего мозга. Будить тут некого.
 
-    # ── Архивариус (память, без рынка — сам читает шину) ──
-    aid, ceh, slot, fn = _ARKHIV
-    ra = _call(ceh, slot, fn)
-    summary["woke"].append(aid)
-    summary["results"][aid] = ra
-    _emit({"type": "agent", "id": aid, "ok": ra.get("ok"),
-           "result": ra, "narrative": ra.get("narrative", "")})
+    # ARHIV_RUKI_V1: Архивариус упразднён (слово Шефа 01.10). Его будили
+    # на каждом месте прогона — платный разговор впустую: склад он искал
+    # по голосам сенсоров, которых нет с 06.08. Архив Биржи теперь код
+    # (Биржа/arhiv_birzhi.py), хранитель на весь город — Лока.
 
     # ── трейдеры: сколько картриджей в цехе, столько и зовём ──
     if not _za_stolom:
         print("[СОВЕТ] в цехе нет ни одного картриджа с мозгом")
     for aid, ceh, slot, fn, pre in _za_stolom:
+        # UCHASTNIKI_PROGONA_V1: место чужое — его хозяйку не будим.
+        # Раньше на месте одной проверяли и будили всех.
+        if tolko and slot != tolko:
+            continue
         # RABOTA_PO_PARE_V1: каждому — ЕГО инструмент и ЕГО этаж.
         _p = _pary.get(slot) or _para_slota(ceh_id, slot)
         if not _p["готов"]:
@@ -801,7 +830,8 @@ def wake_council(symbol: str = "", timeframe: str = "",
             if _p_i.get("готов"):
                 _sym_i, _tf_i = _p_i["symbol"], _p_i["timeframe"]
                 break
-    rex = _call(ceh, slot, fn, symbol=_sym_i, timeframe=_tf_i)
+    rex = _call(ceh, slot, fn, symbol=_sym_i, timeframe=_tf_i,
+                ceh_rabochiy=ceh_id)   # PASPORT_KONTORY_V1: чей стол
     summary["woke"].append(aid)
     summary["results"][aid] = rex
     esig = rex.get("signal", {}) or {}
@@ -845,3 +875,331 @@ def wake_council(symbol: str = "", timeframe: str = "",
 # NEKRON_BUDIT_V1 - marker
 
 # UBORKA_03_09_V1 - marker
+
+# ARHIV_RUKI_V1 - marker
+
+# UCHASTNIKI_PROGONA_V1 - marker
+
+# DVE_KNIGI_V2 - marker
+
+# GOROD_SMOTRIT_V1 - marker
+
+# DVE_SVECHI_STOL_V1 - marker
+
+# PASPORT_KONTORY_V1 - marker
+
+
+# ══ VEDENIE_PO_ZAPISKE_V2 — в сделке будит и младший этаж ══
+# Слово Шефа 20.10: вошёл на рабочем, смотрит младший — значит в сделке и
+# будить по младшему, тем же событиям, что на рабочем (разворотный бар,
+# разворот двумя свечами, приседающий после разворотника). Только факт.
+# Только место, у которого в паспорте цеха «ведение»: «по двум масштабам»,
+# и только его собственная открытая сделка.
+_MLADSHIY_VIDEL = {}      # (место, рынок, этаж) → последняя свеча младшего, что уже видел
+
+
+def _sobytie_bara(bs, J, T, L, point) -> str:
+    """Те же события, что _povod_vzglyada, — для последней свечи bs."""
+    from williams_core import detect_necron_bar, compute_mfi
+    rb = detect_necron_bar(bs, J, T, L)
+    if rb.get("direction"):
+        return f"разворотный бар {rb['direction']} @ {rb['price']}"
+    dv = _dve_svechi(bs, {"jaw_series": J, "teeth_series": T, "lips_series": L})
+    if dv:
+        return dv
+    if len(bs) < 8:
+        return ""
+
+    def _sq(m):
+        return compute_mfi(bs[-m], bs[-m - 1], point=point).get("type") == "SQUAT"
+    if not _sq(1):
+        return ""
+    for k in (1, 2, 3):
+        n = len(bs) - k
+        rbk = detect_necron_bar(bs[:n], J[:n], T[:n], L[:n])
+        if not rbk.get("direction"):
+            continue
+        do = any(_sq(k + 1 + j) for j in range(4))
+        mezhdu = any(_sq(j) for j in range(2, k + 1))
+        if not do and not mezhdu:
+            d = str(bs[-(k + 1)].get("date") or "")[:16]
+            return (f"к разворотнику {rbk['direction']} {d} @ {rbk['price']} пришёл "
+                    f"приседающий через {k} бар(а) — в окне трёх баров, считается")
+        break
+    return ""
+
+
+def _povody_mladshego(symbol: str, timeframe: str, slot: str, t: dict) -> str:
+    try:
+        import vedenie_sdelki as _vs
+        if not slot or not _vs._vedenie_po_zapiske(slot):
+            return ""
+        moy = _vs._nomer(slot)
+        sym = (symbol or "").strip().upper()
+        poz = next((p for p in (t.get("positions") or [])
+                    if str(p.get("status") or "").upper() == "OPEN"
+                    and (p.get("symbol") or "").strip().upper() == sym
+                    and (moy is None or p.get("magic") == moy)
+                    and not (p.get("тень") or _pole_mesta(p, "нога_места")
+                             or p.get("доливка_города") or p.get("_частичное"))), None)
+        et = _vs._etazh_nizhe(timeframe)
+        key = (slot, sym, et)
+        if poz is None or not et:
+            _MLADSHIY_VIDEL.pop(key, None)
+            return ""
+        from feed_source import bars as _bars
+        from williams_core import compute_alligator
+        import hooks as _h
+        bs, point = _bars(symbol, et, 400)
+        try:
+            bs = _h._tolko_zakrytye(bs)
+        except Exception:
+            pass
+        if not bs or len(bs) < 60:
+            return ""
+        videl = _MLADSHIY_VIDEL.get(key) or str(poz.get("opened_at") or "")[:16]
+        _MLADSHIY_VIDEL[key] = str(bs[-1].get("date") or "")[:16]
+        novye = [i for i, b in enumerate(bs) if str(b.get("date") or "")[:16] > videl]
+        if not novye:
+            return ""
+        al = compute_alligator([b["high"] for b in bs], [b["low"] for b in bs], point=point)
+        J = list(al.get("jaw_series") or [])
+        T = list(al.get("teeth_series") or [])
+        L = list(al.get("lips_series") or [])
+        if len(J) < len(bs) or len(T) < len(bs) or len(L) < len(bs):
+            return ""
+        out = []
+        for i in novye[-24:]:
+            s = _sobytie_bara(bs[:i + 1], J[:i + 1], T[:i + 1], L[:i + 1], point)
+            if s:
+                out.append(f"{str(bs[i].get('date') or '')[:16]} {s}")
+        return (f"на {et}: " + "; ".join(out)) if out else ""
+    except Exception as e:
+        print(f"[КЛЮЧ] младший этаж не посмотрелся: {e}")
+        return ""
+
+
+# VEDENIE_PO_ZAPISKE_V2 - marker
+# VEDENIE_PO_ZAPISKE_V3 - marker
+
+
+# ══ KLYUCH_ODIN_OTVET_V1 — на одном баре ключ отвечает одинаково ══
+# Ключ спрашивают дважды на бар: прогон (звать ли Совет) и Совет (будить ли
+# место). Прежний кусок сдвигал «увиденные свечи младшего» на каждом вызове:
+# первый — «будим», второй — «спит», и спящее место прогон считал молчанием
+# модели. Теперь итог запоминается вместе с последней свечой младшего: пока
+# новой свечи нет — тот же ответ. Увиденными свечи становятся с новой свечой.
+def _povody_mladshego(symbol: str, timeframe: str, slot: str, t: dict) -> str:   # noqa: F811
+    try:
+        import vedenie_sdelki as _vs
+        if not slot or not _vs._vedenie_po_zapiske(slot):
+            return ""
+        moy = _vs._nomer(slot)
+        sym = (symbol or "").strip().upper()
+        poz = next((p for p in (t.get("positions") or [])
+                    if str(p.get("status") or "").upper() == "OPEN"
+                    and (p.get("symbol") or "").strip().upper() == sym
+                    and (moy is None or p.get("magic") == moy)
+                    and not (p.get("тень") or _pole_mesta(p, "нога_места")
+                             or p.get("доливка_города") or p.get("_частичное"))), None)
+        et = _vs._etazh_nizhe(timeframe)
+        key = (slot, sym, et)
+        if poz is None or not et:
+            _MLADSHIY_VIDEL.pop(key, None)
+            return ""
+        from feed_source import bars as _bars
+        from williams_core import compute_alligator
+        import hooks as _h
+        bs, point = _bars(symbol, et, 400)
+        try:
+            bs = _h._tolko_zakrytye(bs)
+        except Exception:
+            pass
+        if not bs or len(bs) < 60:
+            return ""
+        posl = str(bs[-1].get("date") or "")[:16]
+        bylo = _MLADSHIY_VIDEL.get(key)
+        if isinstance(bylo, dict) and bylo.get("до") == posl:
+            return bylo.get("итог", "")              # тот же бар — тот же ответ
+        if isinstance(bylo, dict):
+            videl = bylo.get("до") or ""
+        elif isinstance(bylo, str):
+            videl = bylo
+        else:
+            videl = ""
+        videl = videl or str(poz.get("opened_at") or "")[:16]
+        novye = [i for i, b in enumerate(bs) if str(b.get("date") or "")[:16] > videl]
+        itog = ""
+        if novye:
+            al = compute_alligator([b["high"] for b in bs], [b["low"] for b in bs],
+                                   point=point)
+            J = list(al.get("jaw_series") or [])
+            T = list(al.get("teeth_series") or [])
+            L = list(al.get("lips_series") or [])
+            if len(J) >= len(bs) and len(T) >= len(bs) and len(L) >= len(bs):
+                out = []
+                for i in novye[-24:]:
+                    s = _sobytie_bara(bs[:i + 1], J[:i + 1], T[:i + 1], L[:i + 1], point)
+                    if s:
+                        out.append(f"{str(bs[i].get('date') or '')[:16]} {s}")
+                itog = (f"на {et}: " + "; ".join(out)) if out else ""
+        _MLADSHIY_VIDEL[key] = {"до": posl, "итог": itog}
+        return itog
+    except Exception as e:
+        print(f"[КЛЮЧ] младший этаж не посмотрелся: {e}")
+        return ""
+
+
+# KLYUCH_ODIN_OTVET_V1 - marker
+
+
+# ══ NASTROENIE_SDELKI_V1 — будильник по младшему этажу снят ══
+# Слово Шефа 20.10: «зачем её будят разворотники на нижнем этаже? На рабочем
+# разворотник разбудил — спустилась». Будят события рабочего этажа и колокол.
+def _povody_mladshego(symbol: str, timeframe: str, slot: str, t: dict) -> str:   # noqa: F811
+    return ""
+
+
+# NASTROENIE_SDELKI_V1 - marker
+
+
+# ══ MESTO_BEZ_IMENI_V1 — поле места: новое имя, старые записи читаются ══
+def _pole_mesta(d, imya):
+    try:
+        import mesto_urovnya as _mu_p
+        return _mu_p.pole(d, imya)
+    except Exception:
+        return (d or {}).get(imya)
+
+
+# MESTO_BEZ_IMENI_V1 - marker
+
+
+# ══ BUDIT_OTKAT_V1 — откатную сделку будят и события младшего этажа ══
+# Слово Шефа 22.10: «когда в откат — пусть будят по младшему». Те же события,
+# что на рабочем; только место с паспортной записью «ведение»; только своя
+# открытая сделка; только если она — откат (перелома нет). Ответ на одном баре
+# один и тот же: увиденными свечи младшего становятся с новой свечой.
+def _povody_mladshego(symbol: str, timeframe: str, slot: str, t: dict) -> str:   # noqa: F811
+    try:
+        import vedenie_sdelki as _vs
+        if not slot or not _vs._vedenie_po_zapiske(slot):
+            return ""
+        moy = _vs._nomer(slot)
+        sym = (symbol or "").strip().upper()
+        poz = next((p for p in (t.get("positions") or [])
+                    if str(p.get("status") or "").upper() == "OPEN"
+                    and (p.get("symbol") or "").strip().upper() == sym
+                    and (moy is None or p.get("magic") == moy)
+                    and not (p.get("тень") or p.get("нога_джема") or p.get("нога_места")
+                             or p.get("доливка_города") or p.get("_частичное"))), None)
+        et = _vs._etazh_nizhe(timeframe)
+        key = (slot, sym, et)
+        if poz is None or not et:
+            _MLADSHIY_VIDEL.pop(key, None)
+            return ""
+        napr = "LONG" if str(poz.get("direction") or "").upper() == "LONG" else "SHORT"
+        if _vs._scenariy(slot, symbol, napr) != "в откат":
+            _MLADSHIY_VIDEL.pop(key, None)
+            return ""
+        from feed_source import bars as _bars
+        from williams_core import compute_alligator
+        import hooks as _h
+        bs, point = _bars(symbol, et, 400)
+        try:
+            bs = _h._tolko_zakrytye(bs)
+        except Exception:
+            pass
+        if not bs or len(bs) < 60:
+            return ""
+        posl = str(bs[-1].get("date") or "")[:16]
+        bylo = _MLADSHIY_VIDEL.get(key)
+        if isinstance(bylo, dict) and bylo.get("до") == posl:
+            return bylo.get("итог", "")
+        videl = (bylo.get("до") if isinstance(bylo, dict) else "") or \
+            str(poz.get("opened_at") or "")[:16]
+        novye = [i for i, b in enumerate(bs) if str(b.get("date") or "")[:16] > videl]
+        itog = ""
+        if novye:
+            al = compute_alligator([b["high"] for b in bs], [b["low"] for b in bs], point=point)
+            J = list(al.get("jaw_series") or [])
+            T = list(al.get("teeth_series") or [])
+            L = list(al.get("lips_series") or [])
+            if len(J) >= len(bs) and len(T) >= len(bs) and len(L) >= len(bs):
+                out = []
+                for i in novye[-24:]:
+                    s = _sobytie_bara(bs[:i + 1], J[:i + 1], T[:i + 1], L[:i + 1], point)
+                    if s:
+                        out.append(f"{str(bs[i].get('date') or '')[:16]} {s}")
+                itog = (f"на {et}: " + "; ".join(out)) if out else ""
+        _MLADSHIY_VIDEL[key] = {"до": posl, "итог": itog}
+        return itog
+    except Exception as e:
+        print(f"[КЛЮЧ] младший этаж откатной сделки не посмотрелся: {e}")
+        return ""
+
+
+# BUDIT_OTKAT_V1 - marker
+
+
+# ══ VEDENIE_PROSTO_V1 — будильник по младшему снят: откат ждёт разворотника рабочего ══
+def _povody_mladshego(symbol: str, timeframe: str, slot: str, t: dict) -> str:   # noqa: F811
+    return ""
+
+
+# VEDENIE_PROSTO_V1 - marker
+
+
+# ══ ODNA_SVECHA_V1 — на месте «две_свечи: нет» будильник двумя свечами не будит ══
+# Канон («Торговый хаос», 2-е изд., гл. 9): бар разворота — одна свеча целиком
+# за пастью. Слово Шефа 09.11. Остальным местам — как было.
+
+def _odna_mesta() -> list:
+    """ODNA_SVECHA_V1: места с пометкой «две_свечи»: «нет» во всех цехах.
+    → [(цех, слот, ключ)]. Не прочлось — пусто: всё как было."""
+    import json as _j_o
+    from pathlib import Path as _P_o
+    out = []
+    korn = _P_o(__file__).resolve().parent.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха"
+    try:
+        for man_p in korn.glob("*/manifest.json"):
+            try:
+                man = _j_o.loads(man_p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for z in man.get("слоты") or []:
+                if str(z.get("две_свечи") or "").strip().lower() == "нет":
+                    sl = str(z.get("слот") or "").strip()
+                    out.append((man_p.parent.name, sl,
+                                str(z.get("ключ") or sl).strip().lower()))
+    except Exception:
+        pass
+    return out
+
+
+_DVE_SVECHI_VYKL = False
+_dve_svechi_do_odnoy = _dve_svechi
+
+
+def _dve_svechi(bs, al) -> str:   # noqa: F811
+    if _DVE_SVECHI_VYKL:
+        return ""
+    return _dve_svechi_do_odnoy(bs, al)
+
+
+_klyuch_do_odnoy = _klyuch_probuzhdeniya
+
+
+def _klyuch_probuzhdeniya(symbol: str, timeframe: str,   # noqa: F811
+                          slot: str = "") -> dict:
+    global _DVE_SVECHI_VYKL
+    sl = str(slot or "").strip().upper()
+    if not sl or sl not in {s.upper() for _c, s, _k in _odna_mesta()}:
+        return _klyuch_do_odnoy(symbol, timeframe, slot)
+    _DVE_SVECHI_VYKL = True
+    try:
+        return _klyuch_do_odnoy(symbol, timeframe, slot)
+    finally:
+        _DVE_SVECHI_VYKL = False
+
+# ODNA_SVECHA_V1 - marker

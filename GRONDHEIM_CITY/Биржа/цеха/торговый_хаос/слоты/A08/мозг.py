@@ -1,34 +1,57 @@
+# KLON_A07_V_A08_V1: свежая копия A07 (05.10, слово Шефа: «дублируй 07 на 08»).
+# Переставлены имя места, ключ, тетрадь, статистика, подписи и строчка
+# табло («cons» — так A08 зовут рука приказа и исполнитель). Только
+# здесь — опыт «где ты по Аллигатору» (ALLIGATOR_OPYT_V1).
+# KLON_A06_V_A07_V2: свежая копия A06 (01.10, слово Шефа). Переставлены
+# имя места, ключ, тетрадь, статистика, подписи и строчка табло
+# («avan» — так A07 зовут рука приказа и исполнитель). Дальше
+# место A07 растёт само, на этой базе.
 # VYREZAT_KLICHKI_V1
 # GRONDHEIM_CITY/Биржа/цеха/торговый_хаос/слоты/A08/мозг.py
 # ─────────────────────────────────────────────────────────────
-# ЖИВОЙ ПРОГОН ТРЕЙДЕРА (A08) — третий ТРЕЙДЕР Совета Биржи
-# CONS_ENGINE_V1 · перенесён на слотовое шасси (тот же приём, что трейдер)
+# ЖИВОЙ ПРОГОН ТРЕЙДЕРА (A08) — первый ТРЕЙДЕР Совета Биржи
+# BRUT_ENGINE_V1 · перенесён на слотовое шасси (KONTORA_SLOT_V1 приём,
+# распространён на трейдеров торгового_хаоса)
 #
-# Портирован дословно из studio/modules/trading/cons_live.py (-2,
-# 2026-06-19). Близнец brut_live.py по ФОРМЕ. Та же природа трейдера:
-# читает весь накрытый стол, СЧИТАЕТ вход сам (trade_setup мёртв), все
-# рычаги на нём, два следа (табло + дневник), петля обучения на pnl
-# (отложена).
+# Портирован дословно из studio/modules/trading/brut_live.py (-2,
+# 2026-06-18). Форма — близнец сенсоров (Морж/Ганс): живая модель +
+# штатная память + двухслойный JSON + петля обучения.
 #
-# СТИЛЬ ДРУГОЙ. Пробой — §6.1 (пробой фрактала за пастью на импульсе).
-# Откат — §6.3: откат волны 2 после импульса. Ждёт разрядки AO и
-# опоры на Зубы (Красная). Входит позже всех, надёжнее всех: рынок уже
-# доказал намерения, коррекция выдохлась на опоре. НИКОГДА не торгует
-# против глобального тренда. Пропущенная прибыль — не убыток.
+# НО ПРИРОДА ДРУГАЯ. Сенсор кладёт ФАКT. Трейдер выносит РЕШЕНИЕ.
+#   · читает не свой орган, а ВЕСЬ НАКРЫТЫЙ СТОЛ (показания пяти
+#     сенсоров из шины + market_data ядра).
+#   · сам СЧИТАЕТ свой вход по канону, который сам выбрал (три места
+#     входа лежат в знаниях, без хозяина): entry/stop
+#     из market_data — не копирует ниоткуда (trade_setup мёртв).
+#   · ВСЕ РЫЧАГИ ментальные и на нём. Математика кладёт ФАКТЫ (где
+#     фрактал, Teeth, Аллигатор) и НАПОМИНАЕТ канон (§8 стоп под
+#     противоположный фрактал) — но решает трейдер. Канон на полке, не
+#     поводок: где стоп, какой объём, входить ли — его рука. Его
+#     состояние/настроение/опыт влияют на всё. В этом и суть: смотреть,
+#     как живой характер ведёт себя в каноне, а не исполняет его роботом.
 #
-# ХАРАКТЕР ДРУГОЙ. Василий. Автономия низкая (0.3) — уважает систему,
-# входит реже всех, считает риски, не вероятности. Комнатная
-# температура. Канон на полке — но рука его. Ни одной нашей руки на его
-# руке: lot называет сам, цену считает сам, стоп — его.
+# ЭТАП. Сейчас здесь РЕШЕНИЕ ВХОДА (войти/нет, сторона, цена, стоп, лот).
+# ВЕДЕНИЕ позиции (доливка пирамиды на новых фракталах, трейлинг стопа
+# за Аллигатором, выход) — ТЕ ЖЕ рычаги ТОГО ЖЕ трейдера, но на следующих
+# барах, пока позиция жива. Добавим отдельным этапом, когда позиция
+# начнёт жить во времени. Один трейдер, одна психика, от входа до выхода.
 #
-# ДВА СЛЕДА вердикта:
-#   · ТАБЛО  (trading_state["cons"]) — «сейчас», для Исполнителя.
-#   · ДНЕВНИК (данные/diary_cons.jsonl) — событие во времени, КОПИТСЯ.
+# ДВА СЛЕДА вердикта (две природы):
+#   · ТАБЛО  (trading_state["cons"]) — «сейчас», для Исполнителя (контора).
+#     перетирается каждый бар.
+#   · ДНЕВНИК (данные/diary_brut.jsonl) — событие во времени, КОПИТСЯ.
+#     личная тетрадь трейдера. Рука пишущая открывает запись (result=null);
+#     рука дописывающая (при закрытии позиции, в hooks._settle) допишет финал.
 #
-# ХАРАКТЕР: не здесь. РОД Василия (Чертёж Единицы: паспорт, не меняется
-# работой) живёт в жители/ковчег/Василий/passport.json. Старый dna.json
+# ПЕТЛЯ ОБУЧЕНИЯ трейдера — НЕ здесь. Трейдер учится на ДЕНЬГАХ
+# (pnl_r), а он известен только при закрытии. sync_to_dna дёрнется
+# рукой дописывающей, не тут. Здесь результата ещё нет.
+#
+# ХАРАКТЕР: не здесь. РОД трейдера (Чертёж Единицы: паспорт, не меняется
+# работой) живёт в жители/ковчег/трейдер/passport.json. Старый dna.json
 # из -2 сюда НЕ перенесён — паспорт резидента полнее и актуальнее.
-# Слот несёт РОЛЬ, не РОД. Душа грузится тем же спящим try/except.
+# Слот несёт РОЛЬ (промпт+знания+данные), не РОД. Душа грузится тем же
+# спящим try/except format_soul_for_agent, что у всех остальных слотов.
 # ─────────────────────────────────────────────────────────────
 
 import json
@@ -37,7 +60,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-_SLOT_DIR    = Path(__file__).resolve().parent            # слоты/A08/
+# ЗАКОН КАРТРИДЖА ДЛЯ КОДА: файл живёт ПРЯМО В СЛОТЕ, рядом со своим
+# промптом. Слот несёт с собой всё: слоты/A06/{мозг.py, промпт.md,
+# знания/, данные/}.
+_SLOT_DIR    = Path(__file__).resolve().parent            # слоты/A06/
 _CEH_DIR     = _SLOT_DIR.parent.parent                     # торговый_хаос/
 _REPO        = _CEH_DIR.parents[3]                          # корень репо
 _BIRZHA_CODE = _REPO / "Биржа"                              # общий код (движок, llm)
@@ -119,24 +145,42 @@ def _glaz(_chat, symbol, timeframe, slot, preambula=None):
         put = None
         try:
             import grafik
-            put = grafik.kadr(symbol, timeframe)
+            put = grafik.kadr(symbol, timeframe, linii=True)  # KADR_BEZ_ALLIGATORA_V1
         except Exception as e:
             print(f"[КАДР] не нарисовался ({e}) — работаю без глаз")
+        # BIRZHA_BEZ_TANCEV_V1: картинка Шефа — ПЕРВОЙ и ВСЕГДА (в
+        # разговоре). Раньше она шла лишь в придачу к своему кадру:
+        # кадр не нарисовался — не шло ничего, трейдер говорил вслепую.
+        _shefa = _kadr_shefa(razgovor=preambula is not None)
+        _svoy = []
         if put:
+            import base64 as _b64
+            from pathlib import Path as _Pp
+            _svoy = [{"base64": _b64.b64encode(
+                          _Pp(put).read_bytes()).decode("ascii"),
+                      "mime_type": "image/png",
+                      "name": ("ТВОЙ СТОЛ — рынок сейчас, ДРУГОЕ ВРЕМЯ · "
+                               if _shefa else "ТВОЙ КАДР, рынок сейчас · ")
+                              + _Pp(put).name}]
+        # SHEF_KARTINKA_ODNA_V1: показал Шеф — идёт только его картинка;
+        # свой стол житель возьмёт рукой, если понадобится.
+        _kartinki = _shefa if _shefa else _svoy
+        _pomet_shefa = (("[Шеф показал картинку «" + _shefa[0].get("name", "")
+                         + "» — она ЕДИНСТВЕННАЯ. Вопросы Шефа — про неё. Твой стол "
+                         "сейчас не приложен: понадобится — возьми рукой; про него отвечай, только "
+                         "если Шеф спросит. Не видишь того, о чём спрашивают, — "
+                         "так и скажи.]\n\n") if _shefa else "")
+        if _kartinki:
             try:
                 import base64
                 from pathlib import Path as _P
                 from llm import chat_with_images
                 return chat_with_images(
                     system=system,
-                    user_text=(preambula if preambula is not None
-                               else _GLAZ_PREAMBULA) + user,
+                    user_text=_pomet_shefa + (preambula if preambula is not None else _GLAZ_PREAMBULA) + user,
                     knowledge=knowledge,
-                    images=([{"base64": base64.b64encode(
-                                 _P(put).read_bytes()).decode("ascii"),
-                              "mime_type": "image/png",
-                              "name": _P(put).name}]
-                            + _kadr_shefa()),
+                    images=_kartinki,
+                    knowledge_images=_obrazcy(),  # OBRAZCY_V_ZNANIYA_V1
                     # RAZGOVOR_SO_STOLOM_V1: история и температура
                     # ронялись здесь — с картинкой он забывал разговор
                     # и говорил средним голосом вместо своего.
@@ -155,8 +199,8 @@ def _glaz_s_rukami(_chat, symbol, timeframe, slot, ceh, self_key,
                    preambula=None):
     """Кадр + руки: смотрит картинку и сам просит математику.
 
-    RUKI_TREYDERA_V1. Не вышло с руками — падаем на обычный глаз, а
-    не молчим: зрение важнее рук.
+    RUKI_VSEM_V1. Не вышло с руками — падаем на обычный глаз, а не
+    молчим: зрение важнее рук.
     """
     # ZHIVOY_KADR_V1: крючок после каждой руки. Ловит только ответы
     # вида "[КАДР: путь] инструмент этаж" и кладёт их на общую площадь
@@ -209,10 +253,32 @@ def _glaz_s_rukami(_chat, symbol, timeframe, slot, ceh, self_key,
         put = None
         try:
             import grafik
-            put = grafik.kadr(symbol, timeframe)
+            put = grafik.kadr(symbol, timeframe, linii=True)  # KADR_BEZ_ALLIGATORA_V1
         except Exception as e:
             print(f"[КАДР] не нарисовался ({e}) — работаю без глаз")
+        # BIRZHA_BEZ_TANCEV_V1: картинка Шефа — ПЕРВОЙ и ВСЕГДА (в
+        # разговоре). Раньше она шла лишь в придачу к своему кадру:
+        # кадр не нарисовался — не шло ничего, трейдер говорил вслепую.
+        _shefa = _kadr_shefa(razgovor=preambula is not None)
+        _svoy = []
         if put:
+            import base64 as _b64
+            from pathlib import Path as _Pp
+            _svoy = [{"base64": _b64.b64encode(
+                          _Pp(put).read_bytes()).decode("ascii"),
+                      "mime_type": "image/png",
+                      "name": ("ТВОЙ СТОЛ — рынок сейчас, ДРУГОЕ ВРЕМЯ · "
+                               if _shefa else "ТВОЙ КАДР, рынок сейчас · ")
+                              + _Pp(put).name}]
+        # SHEF_KARTINKA_ODNA_V1: показал Шеф — идёт только его картинка;
+        # свой стол житель возьмёт рукой, если понадобится.
+        _kartinki = _shefa if _shefa else _svoy
+        _pomet_shefa = (("[Шеф показал картинку «" + _shefa[0].get("name", "")
+                         + "» — она ЕДИНСТВЕННАЯ. Вопросы Шефа — про неё. Твой стол "
+                         "сейчас не приложен: понадобится — возьми рукой; про него отвечай, только "
+                         "если Шеф спросит. Не видишь того, о чём спрашивают, — "
+                         "так и скажи.]\n\n") if _shefa else "")
+        if _kartinki:
             try:
                 import base64
                 from pathlib import Path as _P
@@ -220,15 +286,11 @@ def _glaz_s_rukami(_chat, symbol, timeframe, slot, ceh, self_key,
                 import ruki_treydera as _rt
                 return chat_with_images_and_tools(
                     system=system,
-                    user_text=(preambula if preambula is not None
-                               else _GLAZ_PREAMBULA) + user,
+                    user_text=_pomet_shefa + (preambula if preambula is not None else _GLAZ_PREAMBULA) + user,
                     knowledge=knowledge,
-                    images=([{"base64": base64.b64encode(
-                                 _P(put).read_bytes()).decode("ascii"),
-                             "mime_type": "image/png",
-                             "name": _P(put).name}]
-                            + _kadr_shefa()),
-                    tools_schema=_rt.shema(timeframe),
+                    images=_kartinki,
+                    knowledge_images=_obrazcy(),  # OBRAZCY_V_ZNANIYA_V1
+                    tools_schema=_shema_s_mesyacem(_rt.shema(timeframe), timeframe),   # HOD_MESYACA_V1 (было: фаза и «через этаж»)
                     executors=_rt.ruki(symbol, ceh, slot, self_key,
                                        dnevnik_fn=_read_recent_diary,
                                        rabochiy_etazh=timeframe,
@@ -261,51 +323,17 @@ def _znaniya_roli() -> str:
                              + f.read_text(encoding="utf-8"))
             except Exception:
                 pass
-    return "".join(kuski)
+    return "".join(kuski)   # книга Котина (общая троим — своя копия в слоте)
 STATE_DIR    = _SLOT_DIR / "данные"
 STATS_PATH   = STATE_DIR / "stats_A08.json"
-DIARY_PATH   = STATE_DIR / "diary_A08.jsonl"
+DIARY_PATH   = STATE_DIR / "diary_A08.jsonl"   # личная тетрадь трейдера (КОПИТСЯ)
 
 
 # ════════════════════════════════════════════════════════════
-# VASYA_SVOY_RAZVOROT_V1 — СОБСТВЕННЫЙ ГЛАЗ ВАСИЛИЯ (откат волны 2)
+# СТОЛ: читаем ВСЮ шину — показания пяти сенсоров (раскладка момента)
 # ─────────────────────────────────────────────────────────────
-# Тот же аппарат, что у Искры (read_ao_wave_form, окно 100-140 баров,
-# §3 канона), но этажом НИЖЕ неё (Правило пятёрки, §4). На ТФ Искры
-# откат волны 2 слишком мелкий — не растягивается на фокусное окно,
-# bdb_dir там почти всегда None. Спуск на этаж ниже даёт тому же
-# движению нужный масштаб — фрактальное самоподобие (§3 canon).
-# ════════════════════════════════════════════════════════════
-
-def _read_vasya_wave(symbol: str, iskra_tf) -> dict:
-    """
-    Собственный разворотный бар Василия. Спуск на ступень ниже Искры,
-    тот же williams_core.read_ao_wave_form (через build_market_data),
-    то же окно 120. Нет этажа Искры или спускаться некуда (дно
-    лесенки) — пустая форма, Василий честно молчит (сенсор без факта).
-    """
-    from mt5_feed import step_down, pull_bars
-    from williams_core import build_market_data, _empty_wave_form
-
-    if not iskra_tf:
-        return _empty_wave_form()
-    own_tf = step_down(iskra_tf)
-    if not own_tf:
-        return _empty_wave_form()
-
-    bars, point = pull_bars(symbol, own_tf, 300)
-    if not bars or point is None:
-        return _empty_wave_form()
-    md = build_market_data(bars, symbol=symbol, timeframe=own_tf, point=point)
-    if not md:
-        return _empty_wave_form()
-    wf = dict(md.get("wave_form", _empty_wave_form()))
-    wf["timeframe"] = own_tf
-    return wf
-
-
-# ════════════════════════════════════════════════════════════
-# СТОЛ: читаем ВСЮ шину — показания пяти сенсоров
+# Сенсор читал свой орган. Трейдер читает накрытый стол целиком:
+# что положили Искра, Морж, Паникёр, Ганс — и справку Архивариуса.
 # ════════════════════════════════════════════════════════════
 
 def _read_table() -> dict:
@@ -317,7 +345,7 @@ def _read_table() -> dict:
         "morj":   t.get("morj", {}),
         "panic":  t.get("panic", {}),
         "hans":   t.get("hans", {}),
-        "arkhiv": t.get("arkhiv", {}),
+        "arkhiv": t.get("arkhiv", {}),   # справка Архивариуса, если положил
         # DISCIPLINA_PYRAMIDY_V1: своя обратная связь по ведению
         "self": t.get("cons", {}),
     }
@@ -325,6 +353,8 @@ def _read_table() -> dict:
 
 # ════════════════════════════════════════════════════════════
 # КАМЕНЬ 2: ЯЗЫК ВЕДЕНИЯ — одно открытое поле action.  # TRADER_MANAGE_LANG_V1
+# Трейдер сам выбрал действие из словаря, глядя на весь стол.
+# Код не решает за него — только проверяет, что не брак, и проносит.
 # ════════════════════════════════════════════════════════════
 
 # ZAYAVKA_BEZ_DUBLEY_V1: руки для висящей заявки. Без них MOVE_ORDER
@@ -335,14 +365,14 @@ _MANAGE_ACTIONS = ("ENTER", "WAIT", "HOLD", "MOVE_STOP", "ADD", "CLOSE",
 
 def _derive_action(signal: dict) -> str:
     """
-    Действие трейдера. Приоритет — явное поле cons_action (новый язык).
+    Действие трейдера. Приоритет — явное поле brut_action (новый язык).
     Фоллбэк на старый verdict (обратная совместимость): APPROVED→ENTER,
-    REJECTED→WAIT.
+    REJECTED→WAIT. Так камень 2 не ломает старые ответы.
     """
-    a = (signal.get("cons_action") or "").upper().strip()
+    a = (signal.get("brut_action") or "").upper().strip()
     if a in _MANAGE_ACTIONS:
         return a
-    v = signal.get("cons_verdict")
+    v = signal.get("brut_verdict")
     if v == "APPROVED":
         return "ENTER"
     return "WAIT"
@@ -353,37 +383,44 @@ def _sanitize_manage(signal: dict) -> dict:
     Санитар ведения. Гасит брак в полях ведения — НЕ решает за трейдера.
       MOVE_STOP без new_stop → брак → WAIT (стоп не трогаем)
       ADD без add_lot       → брак → HOLD (держим как есть)
-      ENTER чистит cons_verdict под себя (совместимость с камнем 3)
+      ENTER чистит brut_verdict под себя (совместимость с камнем 3)
     """
     action = _derive_action(signal)
 
     if action == "MOVE_STOP":
-        ns = signal.get("cons_new_stop")
+        ns = signal.get("brut_new_stop")
         if ns is None:
             action = "WAIT"
-            signal["cons_reason"] = (signal.get("cons_reason", "") +
+            signal["brut_reason"] = (signal.get("brut_reason", "") +
                                       " [гашу MOVE_STOP без new_stop]").strip()
     elif action == "ADD":
-        al = signal.get("cons_add_lot")
+        al = signal.get("brut_add_lot")
         if al is None:
             action = "HOLD"
-            signal["cons_reason"] = (signal.get("cons_reason", "") +
+            signal["brut_reason"] = (signal.get("brut_reason", "") +
                                       " [гашу ADD без add_lot]").strip()
 
-    signal["cons_action"] = action
+    signal["brut_action"] = action
+    # держим verdict в согласии для старого пути Исполнителя:
+    # ENTER → APPROVED, всё остальное (вход не открывается) → как есть
     if action == "ENTER":
-        signal["cons_verdict"] = "APPROVED"
+        signal["brut_verdict"] = "APPROVED"
     elif action == "WAIT":
-        signal["cons_verdict"] = "REJECTED"
+        signal["brut_verdict"] = "REJECTED"
     elif action in ("MOVE_ORDER", "CANCEL"):
         # ZAYAVKA_BEZ_DUBLEY_V1: не вход — заявка уже висит. Старый
         # APPROVED с прошлого ENTER протечь не должен.
-        signal["cons_verdict"] = "REJECTED"
+        signal["brut_verdict"] = "REJECTED"
+    # HOLD/MOVE_STOP/ADD/CLOSE — ведение, к открытию входа не относятся;
+    # verdict не навязываем (камень 3 читает action напрямую).
     return signal
 
 
 def _save_verdict_to_table(signal: dict, bar_time=None):
-    """ТАБЛО: вердикт трейдера в шину для Исполнителя."""
+    """
+    ТАБЛО: кладёт вердикт трейдера в шину для Исполнителя.
+    Перетирается каждый бар — это «сейчас», команда на исполнение.
+    """
     from hooks import load_trading_state, save_trading_state
     t = load_trading_state()
     t.setdefault("cons", {})
@@ -391,15 +428,16 @@ def _save_verdict_to_table(signal: dict, bar_time=None):
     # Без этого Исполнитель по закону SVEZHEST_V1 не берёт его
     # в дело вовсе — «вердикт без отметки бара, не считаю».
     t["cons"]["бар"] = str(bar_time or "")
-    t["cons"]["verdict"]   = signal.get("cons_verdict", "REJECTED")
-    t["cons"]["reason"]    = signal.get("cons_reason", "")
-    t["cons"]["direction"] = signal.get("cons_direction")
-    t["cons"]["entry"]     = signal.get("cons_entry")
-    t["cons"]["stop"]      = signal.get("cons_stop")
-    t["cons"]["lot"]       = signal.get("cons_lot")
-    t["cons"]["action"]    = signal.get("cons_action")
-    t["cons"]["new_stop"]  = signal.get("cons_new_stop")
-    t["cons"]["add_lot"]   = signal.get("cons_add_lot")
+    t["cons"]["verdict"]   = signal.get("brut_verdict", "REJECTED")
+    t["cons"]["reason"]    = signal.get("brut_reason", "")
+    t["cons"]["direction"] = signal.get("brut_direction")
+    t["cons"]["entry"]     = signal.get("brut_entry")
+    t["cons"]["stop"]      = signal.get("brut_stop")
+    t["cons"]["lot"]       = signal.get("brut_lot")
+    # КАМЕНЬ 2: язык ведения — действие + числа ведения в шину.  # TRADER_MANAGE_LANG_V1
+    t["cons"]["action"]    = signal.get("brut_action")
+    t["cons"]["new_stop"]  = signal.get("brut_new_stop")
+    t["cons"]["add_lot"]   = signal.get("brut_add_lot")
     # DISCIPLINA_PYRAMIDY_V1: укол одноразовый — гасим после прочтения
     if t.get("cons", {}).get("vedenie_feedback"):
         t["cons"]["vedenie_feedback"] = None
@@ -407,7 +445,7 @@ def _save_verdict_to_table(signal: dict, bar_time=None):
 
 
 # ════════════════════════════════════════════════════════════
-# ДНЕВНИК: рука пишущая (КОПИТСЯ, append)
+# ДНЕВНИК: рука пишущая (КОПИТСЯ, append, не перетирается)
 # ════════════════════════════════════════════════════════════
 
 def _podpisat(zapis: dict) -> dict:
@@ -428,8 +466,13 @@ def _podpisat(zapis: dict) -> dict:
 
 
 def _append_diary(signal: dict, diary_entry: dict, market: dict, table: dict):
-    """Открывает запись события в личной тетради. result=null — допишет
-    рука дописывающая при закрытии позиции (hooks._settle)."""
+    """
+    Открывает запись события в личной тетради трейдера. result=null —
+    допишет рука дописывающая при закрытии позиции (hooks._settle).
+
+    Событие = {время, рынок, стол(сжато), что решил, result:null}.
+    Каждое событие копится навсегда — память характера.
+    """
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     # YASHCHIK_STOLA_V1: каждая запись подписывается автором — см.
     # _podpisat ниже по файлу. Тетрадь переживает жильцов, и без
@@ -439,30 +482,32 @@ def _append_diary(signal: dict, diary_entry: dict, market: dict, table: dict):
         "bar_time":  market.get("bar_time"),
         "symbol":    market.get("symbol"),
         "timeframe": market.get("timeframe"),
+        # сжатый отпечаток стола — чтобы потом вспомнить КАКОЙ был момент
         "table": {
             "t1":     table.get("iskra", {}).get("t1_status"),
             "morj":   table.get("morj", {}).get("morj_status"),
             "panic":  table.get("panic", {}).get("panic_phase"),
             "fractal_valid": table.get("hans", {}).get("fractal_valid"),
         },
-        "verdict":   signal.get("cons_verdict"),
-        "direction": signal.get("cons_direction"),
-        "entry":     signal.get("cons_entry"),
-        "stop":      signal.get("cons_stop"),
-        "lot":       signal.get("cons_lot"),
+        "verdict":   signal.get("brut_verdict"),
+        "direction": signal.get("brut_direction"),
+        "entry":     signal.get("brut_entry"),
+        "stop":      signal.get("brut_stop"),
+        "lot":       signal.get("brut_lot"),
         # ISTORIYA_OT_SLEDA_V1: дневник пишет ФАКТ, не рассказ.
         # Ниже — то, что доказано рычагом: был ли приказ, что
         # приказано и зачем. input/action остаются голосом трейдера
         # и стоят РЯДОМ, а не вместо: видно, где факт, где слова.
-        "что":       signal.get("cons_action"),
-        "почему":    signal.get("cons_reason"),
+        "что":       signal.get("brut_action"),
+        "почему":    signal.get("brut_reason"),
         "рычаг":     bool(signal),
         # SKVOZNAYA_PAMYAT_V1: из какого прогона (None — живая работа)
-        "прогон":    ((table or {}).get("прогон") or {}).get("id"),
+        "прогон":    _nomer_progona(table),   # PROGON_V_TETRADI_V1
         "ключ":      _klyuch_svoy(),
+        # голос трейдера о себе — вводная и поступок (из diary_entry промта)
         "input":     (diary_entry or {}).get("input", ""),
         "action":    (diary_entry or {}).get("action", ""),
-        "result":    None,
+        "result":    None,   # допишет жизнь при закрытии позиции
     })
     with open(DIARY_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -520,7 +565,7 @@ def _moi_sobytiya(n: int = 5, as_of_bar_time=None) -> list:
 
 
 def _read_recent_diary(n: int = 5, as_of_bar_time=None) -> list:
-    """Последние n событий из личной тетради.
+    """Последние n событий из личной тетради — трейдер берёт их с собой на стол.
 
     DNEVNIK_BEZ_BUDUSHCHEGO_V1 (18.07): те же n событий, но ДО
     as_of_bar_time — иначе трейдер в прошлом видит исходы сделок из
@@ -547,7 +592,7 @@ def _read_recent_diary(n: int = 5, as_of_bar_time=None) -> list:
 
 
 # ════════════════════════════════════════════════════════════
-# СТАТИСТИКА (для дашборда)
+# СТАТИСТИКА ТРЕЙДЕРА (для дашборда, как у сенсоров)
 # ════════════════════════════════════════════════════════════
 
 def _load_stats() -> dict:
@@ -563,9 +608,9 @@ def _update_stats(signal: dict) -> dict:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     stats = _load_stats()
     stats["runs"] = stats.get("runs", 0) + 1
-    if signal.get("cons_verdict") == "APPROVED":
+    if signal.get("brut_verdict") == "APPROVED":
         stats["approved"] = stats.get("approved", 0) + 1
-        d = signal.get("cons_direction")
+        d = signal.get("brut_direction")
         if d == "LONG":
             stats["long"] = stats.get("long", 0) + 1
         elif d == "SHORT":
@@ -578,10 +623,11 @@ def _update_stats(signal: dict) -> dict:
 
 
 # ════════════════════════════════════════════════════════════
-# ПАРСИНГ ТРЁХСЛОЙНОГО ОТВЕТА {narrative, signal, diary_entry}
+# ПАРСИНГ ТРЁХСЛОЙНОГО ОТВЕТА ТРЕЙДЕРА {narrative, signal, diary_entry}
 # ════════════════════════════════════════════════════════════
 
-def _parse_cons(response: str) -> tuple[str, dict, dict]:
+def _parse_brut(response: str) -> tuple[str, dict, dict]:
+    """Достаёт {narrative, signal, diary_entry}. При сбое — текст как голос."""
     cleaned = re.sub(r"```(?:json)?", "", response).strip()
     start = cleaned.find("{")
     if start != -1:
@@ -672,39 +718,40 @@ def _razobrat_strokami(response: str):
 
 
 def _sanitize(signal: dict) -> dict:
-    """APPROVED только с направлением; иначе всё null."""
-    v = signal.get("cons_verdict")
+    """Чистим вердикт: APPROVED только с направлением; иначе всё null."""
+    v = signal.get("brut_verdict")
     if v not in ("APPROVED", "REJECTED"):
         v = "REJECTED"
-    signal["cons_verdict"] = v
+    signal["brut_verdict"] = v
     # KOLOKOL_I_PERESTANOVKA_V1: при MOVE_ORDER цена и стоп — это
     # новое место заявки, не вход. Старый REJECTED (от WAIT) их
     # стирать не должен — иначе исполнитель получит None.
-    _perestavlyayu = str(signal.get("cons_action") or ""
+    _perestavlyayu = str(signal.get("brut_action") or ""
                          ).upper().strip() == "MOVE_ORDER"
     if v == "REJECTED" and not _perestavlyayu:
-        signal["cons_direction"] = None
-        signal["cons_entry"] = None
-        signal["cons_stop"]  = None
-        signal["cons_lot"]   = None
+        signal["brut_direction"] = None
+        signal["brut_entry"] = None
+        signal["brut_stop"]  = None
+        signal["brut_lot"]   = None
     elif not _perestavlyayu:
-        d = signal.get("cons_direction")
+        d = signal.get("brut_direction")
         if d not in ("LONG", "SHORT"):
-            signal["cons_verdict"]   = "REJECTED"
-            signal["cons_reason"]    = (signal.get("cons_reason", "") +
+            # сказал APPROVED без стороны — это брак, гасим в REJECTED
+            signal["brut_verdict"]   = "REJECTED"
+            signal["brut_reason"]    = (signal.get("brut_reason", "") +
                                         " [гашу: APPROVED без направления]").strip()
-            signal["cons_direction"] = None
-            signal["cons_entry"] = None
-            signal["cons_stop"]  = None
-            signal["cons_lot"]   = None
+            signal["brut_direction"] = None
+            signal["brut_entry"] = None
+            signal["brut_stop"]  = None
+            signal["brut_lot"]   = None
     return signal
 
 
 # ════════════════════════════════════════════════════════════
-# ЧАТ С ТРЕЙДЕРОМ (клик пузырька)
+# ЧАТ С ТРЕЙДЕРОМ (клик пузырька) — разговор о последнем решении
 # ════════════════════════════════════════════════════════════
 
-def chat_with_cons(question: str, last_run: Optional[dict] = None,
+def chat_with_brut(question: str, last_run: Optional[dict] = None,
                    dialog: Optional[list] = None,
                    rynok: Optional[tuple] = None) -> str:
     # RAZGOVOR_SO_STOLOM_V1: rynok — (инструмент, этаж) с полки кабинета.
@@ -718,10 +765,10 @@ def chat_with_cons(question: str, last_run: Optional[dict] = None,
             "\n\n=== ТВОЁ ПОСЛЕДНЕЕ РЕШЕНИЕ (рабочая память) ===\n"
             f"Инструмент: {mk.get('symbol','?')} {mk.get('timeframe','?')} "
             f"· бар {mk.get('bar_time','?')}\n"
-            f"Вердикт: {sig.get('cons_verdict','—')} "
-            f"({sig.get('cons_reason','')})\n"
-            f"Направление: {sig.get('cons_direction','—')}  ·  "
-            f"вход {sig.get('cons_entry','—')} · стоп {sig.get('cons_stop','—')}\n"
+            f"Вердикт: {sig.get('brut_verdict','—')} "
+            f"({sig.get('brut_reason','')})\n"
+            f"Направление: {sig.get('brut_direction','—')}  ·  "
+            f"вход {sig.get('brut_entry','—')} · стоп {sig.get('brut_stop','—')}\n"
             f"Что ты сказал: {last_run.get('narrative','')}\n"
             "=== КОНЕЦ ===\n\n"
             # DVIZHOK_NE_RESHAET_V1: без имени станции и без выданного
@@ -741,7 +788,16 @@ def chat_with_cons(question: str, last_run: Optional[dict] = None,
         work_ctx = (
             "\n\n=== РАБОЧИЙ РЕЖИМ ===\n"
             "Ты ещё не смотрел стол в этой сессии. Если Шеф спрашивает про "
-            "рынок — скажи, что нужно нажать РЫНОК. Живым голосом, без JSON."
+            "рынок — скажи, что нужно нажать РЫНОК. Живым голосом, без JSON.\n\n"
+            # ZAKRYT_JSON_V_RAZGOVORE_V1: без этой явной отмены схема
+            # {narrative, diary_entry} из "КАК ТЫ ОТВЕЧАЕШЬ" ничем не
+            # перебивалась — фраза "без JSON" выше проигрывала наглядному
+            # фрагменту кода в самом промпте.
+            "=== СЕЙЧАС РАЗГОВОР, А НЕ РАБОТА ===\n"
+            "Блок «КАК ТЫ ОТВЕЧАЕШЬ» со схемой полей — про РАБОТУ по "
+            "кнопке РЫНОК. Сейчас с тобой разговаривают. Никакого JSON, "
+            "никаких полей решения, никаких фигурных скобок — просто "
+            "ответь словами на то, что спросили."
         )
 
     # RAZGOVOR_SO_STOLOM_V1: живой стол в разговор. Раньше сюда шёл
@@ -840,7 +896,7 @@ def chat_with_cons(question: str, last_run: Optional[dict] = None,
                     if (_sym and _tf) else chat)
         _otvet = _chat_fn(system=system, user=question, history=history,
                         knowledge=_znaniya,
-                    agent_id="A08_KONSERVATOR", slot_id="trading", temperature=_my_temp())
+                    agent_id="A08_CONS", slot_id="trading", temperature=_my_temp())
     except Exception as e:
         return f"⚠️ трейдер не смог ответить: {e}"
 
@@ -858,10 +914,14 @@ def chat_with_cons(question: str, last_run: Optional[dict] = None,
 
 # ════════════════════════════════════════════════════════════
 # КАМЕНЬ 1: СВОЯ ОТКРЫТАЯ ПОЗИЦИЯ — ФАКТ на стол (не приказ)  # TRADER_SEES_POSITION_V1
+# ─────────────────────────────────────────────────────────────
+# Трейдер видит, что он в рынке: что открыто, сколько живёт, как
+# плавает. Решение — его природа. R считаем ТОЙ ЖЕ формулой, что
+# _settle_positions применит при закрытии (защита чисел).
 # ════════════════════════════════════════════════════════════
 
 # KLON_DUSHI_V1: магик — из МАСКИ носителя (Закон Пары), не константой.
-# Было: _MY_MAGIC = 100003 — ещё одна копия правды. Их было пять.
+# Было: _MY_MAGIC = 100001 — ещё одна копия правды. Их было пять.
 def _my_magic():
     """Магик ТОГО, кто сидит в этом слоте. Нет носителя → None."""
     try:
@@ -898,6 +958,7 @@ def _my_open_position(md: dict) -> dict | None:
     direction = mine.get("direction", "LONG")
     price = (md.get("price", {}) or {}).get("close")
 
+    # Плавающий R — эталон формулы из hooks._settle_positions.
     floating_r = None
     if entry is not None and stop is not None and price is not None:
         if direction == "LONG":
@@ -909,11 +970,12 @@ def _my_open_position(md: dict) -> dict | None:
         if risk and risk > 0:
             floating_r = round(pnl_price / risk, 2)
 
+    # bars_alive — сколько баров живёт (по дате открытия vs текущий бар).
     bars_alive = None
     opened_at = mine.get("opened_at")
     bar_time  = md.get("bar_time")
     if opened_at and bar_time and opened_at == bar_time:
-        bars_alive = 0
+        bars_alive = 0   # открыта на этом же баре
 
     return {
         "direction":     direction,
@@ -922,15 +984,30 @@ def _my_open_position(md: dict) -> dict | None:
         "lot":           mine.get("lot"),
         "opened_at":     opened_at,
         "current_price": price,
-        "floating_r":    floating_r,
+        "floating_r":    floating_r,   # нереализованный R «закрой сейчас»
         "bars_alive":    bars_alive,
     }
 
 
-def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
+# ════════════════════════════════════════════════════════════
+# ГЛАВНАЯ ФУНКЦИЯ — один взгляд трейдера на накрытый стол
+# ════════════════════════════════════════════════════════════
+
+def run_brut(symbol: str = "XAUUSD", timeframe: str = "H4",
              bars_count: int = 300, povod: str = "") -> dict:
-    """Один взгляд трейдера на стол. Читает показания сенсоров (шина)
-    + market_data ядра, судит сам по §6.3 (откат волны 2, опора)."""
+    """
+    Один взгляд трейдера на стол. Не смотрит рынок «своим органом» —
+    читает показания сенсоров (шина) + market_data ядра, судит сам.
+
+    Цепочка: РЫНОК → пять сенсоров накрыли стол → трейдер забирает свой
+    комплект → выносит вердикт по канону, который сам выбрал → кладёт
+    в табло (для Исполнителя) и открывает событие в дневнике.
+
+    Возвращает (как сенсоры, для каркаса):
+      {ok, error, narrative, signal, diary_entry, stats, market, table, raw}
+    """
+    # ── 1. Поднять контур: бары + point + market_data (для цен входа) ──
+    # Наследуем этаж Искры — судим там, где цех нашёл событие.
     # STOL_I_GLAZ_V1: стол накрывает КОД, а не сенсоры-голоса.
     # Сенсоры уехали в архив (решение Шефа 06.08), и ждать их больше
     # некого. Имена полей те же, что клали они, — ниже по файлу ничего
@@ -985,11 +1062,11 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
     # накрывается на три рабочих этажа сразу, и он сам говорит, на
     # каком работает. Цены входа и стопа от этажа не зависят — они
     # одни для всех; на разных этажах видны разные вещи, вот и всё.
-    # RUKI_TREYDERA_V1: три этажа были зашиты здесь намертво и
-    # считались КАЖДЫЙ раз, спрашивал он их или нет. Теперь этажи —
-    # его дело: захочет посмотреть соседний, попросит рукой
-    # stol_na_etazhe. Оставлен только его рабочий — тот, на котором
-    # нарисован кадр перед ним.
+    # RUKI_VSEM_V1: три этажа были зашиты здесь намертво и считались
+    # КАЖДЫЙ раз, спрашивала она их или нет. Кадр при этом рисуется
+    # один — по её рабочему этажу, значит по двум из трёх она ходила
+    # вслепую, по одним числам. Теперь этажи — её дело: нужен
+    # соседний, попросит рукой stol_na_etazhe.
     _RABOCHIE_ETAZHI = (timeframe,)
 
     def _lesenka_slovami() -> str:
@@ -1001,7 +1078,8 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
             "=== ГДЕ ТЫ СТОИШЬ ===\n"
             f"Инструмент {symbol}, рабочий этаж {timeframe}. Кадр перед "
             f"тобой нарисован по нему.\n"
-            "Чисел рядом нет НАРОЧНО: сперва глаз, приборы потом. Если "
+            "Приборов рядом нет НАРОЧНО (кроме счёта дивера города — он "
+            "ниже, фактом): сперва глаз, приборы потом. Если "   # HOD_MESYACA_V1
             "после взгляда они тебе нужны — попроси рукой, это твоё "
             "право:\n"
             "  · stol_na_etazhe — показания этажа: Аллигатор, AO, "
@@ -1014,10 +1092,6 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
             "moy_dnevnik, uchebnik.\n"
             "Смотри столько кадров, сколько нужно, чтобы понять, что "
             "происходит. Не понял — это законный ответ: не работаешь.\n\n")
-
-    # VASYA_SVOY_RAZVOROT_V1: собственный разворотный бар отката волны 2,
-    # НЕ этаж Искры — этаж НИЖЕ (Правило пятёрки, §4 канона).
-    own_wave = _read_vasya_wave(symbol, iskra_tf)
 
     # TREYDER_ZHIV_V1: бары берём ОБЩИМ источником, а не из терминала
     # напрямую. Тогда трейдер живёт по тому же крану РЕАЛ/ТЕСТЕР, что и
@@ -1037,6 +1111,7 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
                 "narrative": "", "signal": {}, "diary_entry": {},
                 "stats": _load_stats(), "market": {}, "table": table}
 
+    # ── 2. Душа (пока спит, как у всех — try/except, не роняет цикл) ──
     # KLON_DUSHI_V1: ДУША — от НОСИТЕЛЯ (маска, Закон Пары), не от трупа из -2.
     # Было: format_soul_for_agent из снесённой studio/ — падало ВСЕГДА
     # («No module named studio»), работали голыми. Пара — ИЗ ПУТИ мозга.
@@ -1046,43 +1121,43 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         _n = dusha_slota(_CEH, _SLOT)
         if _n:
             soul = _n["душа"]
-            print(f"[CONS] 🧬 За столом: {_n['носитель']['имя']}")
+            print(f"[BRUT] 🧬 За столом: {_n['носитель']['имя']}")
     except Exception as e:
-        print(f"[CONS] ⚠️  Носитель не поднялся ({e}) — работаю без души")
+        print(f"[BRUT] ⚠️  Носитель не поднялся ({e}) — работаю без души")
 
     prompt    = PROMPT_PATH.read_text(encoding="utf-8") if PROMPT_PATH.exists() else ""
     knowledge = _znaniya_roli()   # ZNANIYA_PAPKOY_V1: вся папка, не один файл
 
+    # ── 3. Личный дневник — трейдер берёт прошлые события с собой ──
     # DNEVNIK_BEZ_BUDUSHCHEGO_V1: только события ДО текущего бара
     # YASHCHIK_STOLA_V1: в голову — только СОБЫТИЯ, не рутина.
     recent = _moi_sobytiya(5, as_of_bar_time=md.get("bar_time"))
 
+    # ── 4. РАСКЛАДКА МОМЕНТА — то, что код кладёт трейдеру на стол ──
+    # Якорь, индикаторы, Зубы (Красная), фракталы за пастью, хозяин бара,
+    # фрактал-ориентир Ганса. трейдер НЕ пересчитывает — читает и СЧИТАЕТ
+    # свой вход из этих чисел. Стоп — под противоположный фрактал (§8),
+    # это его рычаг, не рельса.
     alligator = md.get("alligator", {})
     fractals  = md.get("fractals", {})
     price     = md.get("price", {})
-    table_for_cons = {
+    table_for_brut = {
+        # КАМЕНЬ 1: своя открытая позиция — ФАКТ (null если не в рынке).  # TRADER_SEES_POSITION_V1
         "position": _my_open_position(md),
         "anchor": {
-            # KOMPAS_DOSTAVKA_TREYDERAM_V1: НАСТОЯЩИЙ компас, не
-            # направление точки — см. мозг A01/A06 за объяснением.
-            "global_trend": table.get("iskra", {}).get("compass"),
+            # KOMPAS_DOSTAVKA_TREYDERAM_V1: global_trend — НАСТОЯЩИЙ компас
+            # (v2_descent.compass через trading_state), не направление
+            # точки. Раньше здесь читался trend_direction — до снятия
+            # ворот (KOMPAS_NE_VOROTA_V1) это было то же число случайно,
+            # теперь это два разных факта, и подмена тихо портила стол.
+            # Фоллбэк — global_bias из market_data, если дивера-с-якорем
+            # не было вовсе.
+            "global_trend": (table.get("iskra", {}).get("compass")
+                             or (md.get("global_bias")
+                                 if md.get("global_bias") in ("BULL", "BEAR")
+                                 else None)),
             "soglasie": table.get("iskra", {}).get("soglasie"),
             "found_timeframe": iskra_tf,
-        },
-        # VASYA_SVOY_RAZVOROT_V1: твой СОБСТВЕННЫЙ разворотный бар,
-        # не чужой (не фрактал Ганса, не точка Искры) — на масштабе
-        # ТВОЕЙ волны 2, этажом ниже Искры.
-        # RUKI_TREYDERA_V1: раньше код САМ спускался на ступень ниже и
-        # мерил волну там — потому что «трейдер пасёт конец волны
-        # 2». Она про это не просила: паттерн жил в коде, а не в её
-        # выборе. Спуск остался возможным, но теперь это ЕЁ шаг —
-        # рука izmerit_volnu(этаж).
-        "own_wave": {
-            "timeframe":            own_wave.get("timeframe"),
-            "bdb_dir":              own_wave.get("bdb_dir"),
-            "bdb_price":            own_wave.get("bdb_price"),
-            "dlina":                own_wave.get("dlina"),
-            "struktura_chitaetsya": own_wave.get("struktura_chitaetsya"),
         },
         # PRIBORY_V_MOZG_V1: здесь были ВЫВОДЫ сенсоров — «бар найден»,
         # «согласен с водой», «фрактал действителен». Их больше нет:
@@ -1091,13 +1166,17 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         "приборы": table.get("приборы", {}),
         "arkhiv": table.get("arkhiv", {}),
         "market": {
-            "teeth":  alligator.get("teeth"),
+            "teeth":  alligator.get("teeth"),       # Красная — граница пасти
             "alligator_sleeping": alligator.get("sleeping"),
-            "fractal_up":   fractals.get("last_up"),
+            # фракталы за пастью: вход от фрактала ПО тренду (+тик),
+            # стоп — под ПРОТИВОПОЛОЖНЫЙ фрактал (§8 книги Котина).
+            "fractal_up":   fractals.get("last_up"),    # {price, bar_index, date}
             "fractal_down": fractals.get("last_down"),
+            # Ганс уже посчитал фрактал-ориентир — подсказка, но трейдер
+            # волен взять и сырой fractal_up/down. Его рычаг.
             "hans_fractal_price": table.get("hans", {}).get("fractal_price"),
-            "price":    price,
-            "point":    point,
+            "price":    price,                        # OHLC — хозяин бара
+            "point":    point,                        # тик — для entry±тик
         },
     }
 
@@ -1120,7 +1199,7 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
     # запрос был про поиск входа, и человек честно отвечал «сигнала
     # для входа нет, НАБЛЮДАЮ» — про собственную сделку.
     _vedenie_blok = ""
-    _poz = (table_for_cons.get("position") or None)
+    _poz = (table_for_brut.get("position") or None)
     if _poz:
         _r = _poz.get("floating_r")
         _r_slovami = (f"{_r}R" if _r is not None else "R пока не считается")
@@ -1130,16 +1209,24 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
             f"стоп {_poz.get('stop')}, лот {_poz.get('lot')}, "
             f"открыта {_poz.get('opened_at')}.\n"
             f"Сейчас {_poz.get('current_price')} — это {_r_slovami}.\n\n"
+            f"{_metka_sdelki(symbol, _poz)}"   # HOD_MESYACA_V1: что это за сделка
             "Вход уже сделан, и сделал его ТЫ. Не ищи его заново и не "
             "суди, годится ли это место: поздно, ты уже в рынке.\n"
-            "Посмотри на кадр и реши, что делать со сделкой: держать "
-            "как есть, подтянуть стоп, долить или закрыть. Стоп по "
-            "фракталам ведёт код — трогай его, только если видишь "
-            "причину.\n"
+            "Посмотри на кадр и реши по своей сделке: держать, закрыть "
+            "всё или часть, подтянуть стоп, долить. Позиция твоя; город "
+            "не торгует: рядом он только смотрит по фактам (стоп и три "
+            "условия против) и говорит, где вышел бы, — "   # GOROD_SMOTRIT_V1
+            "и твоих решений не трогает. Правила на этот счёт нет. Стоп "
+            "сам не движется — только твоим MOVE_STOP. Смотри любые "
+            "этажи, какие нужны.\n"   # DVE_KNIGI_V2
             "Всё, что написано НИЖЕ про поиск входа и три места, — "
             "справка об устройстве, а не задание на сейчас.\n"
-            "Отдай приказ рукой otdat_prikaz: HOLD / MOVE_STOP / ADD / "
-            "CLOSE. Словами решение не считается.\n\n")
+            "Отдай приказ рукой otdat_prikaz: HOLD / MOVE_STOP (новый_стоп, "
+            "только в защиту) / ADD (долить — доля ИСХОДНОЙ позиции, только "
+            "в плюсе, не больше предыдущей ноги; после долива худший исход "
+            "по стопу не хуже −1 исходного риска, иначе сперва подтяни "
+            "стоп) / CLOSE (доля исходной позиции; не указана — вся). "
+            "Словами решение не считается.\n\n")
 
     user_msg = (
         # DISCIPLINA_PYRAMIDY_V1: если по прошлому ведению был укол — показать
@@ -1148,6 +1235,7 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
             f"{table.get('self', {}).get('vedenie_feedback')}\n"
             f"Учти это сейчас — дисциплина пирамиды железная.\n\n")
            if table.get('self', {}).get('vedenie_feedback') else "")
+        + _hod_mesyaca_blok(symbol, timeframe, md.get("bar_time"))   # HOD_MESYACA_V1: сценарий — первым
         + _vedenie_blok
         + _instr_blok
         + _lesenka_slovami()
@@ -1155,28 +1243,35 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         # stol_na_etazhe. Здесь остаётся только то, без чего
         # нельзя НАЗВАТЬ цену: своя позиция и текущий бар.
         + _povod_blok(povod)      # POVOD_VIDEN_V1
+        + _diver_goroda_blok(symbol, timeframe)   # HOD_MESYACA_V1: счёт дивера города — фактом
         + _svoyo_blok()           # NE_ZAYDI_DVAZHDY_V1
         + _okruzhenie_blok(md)    # OKRUZHENIE_BARA_V1
         + "=== ЧТО У ТЕБЯ НА РУКАХ ===\n"
-        f"{json.dumps({'position': table_for_cons.get('position'),
-                       'бар': (table_for_cons.get('market') or {}).get('price'),
-                       'тик': (table_for_cons.get('market') or {}).get('point')},
+        f"{json.dumps({'position': table_for_brut.get('position'),
+                       'бар': (table_for_brut.get('market') or {}).get('price'),
+                       'тик': (table_for_brut.get('market') or {}).get('point')},
                      ensure_ascii=False, indent=2)}\n\n"
         "=== ТВОИ СОБЫТИЯ (входы и чем кончились — что помнишь сам) ===\n"
         f"{json.dumps(recent, ensure_ascii=False, indent=2) if recent else '(пусто — первое решение)'}\n\n"
-        "=== ТВОЙ СОБСТВЕННЫЙ РАЗВОРОТНЫЙ БАР (own_wave на столе) ===\n"
-        "Это факт на масштабе ТВОЕЙ коррекции — не сигнал закрытия чужой "
-        "пирамиды и не чужая точка. bdb_dir/bdb_price — сторона и цена "
-        "твоего разворотного бара, если он уже сформирован; null — на "
-        "этом этаже пока не нашёлся, это не отказ, просто рано.\n\n"
-        "Перед тобой стол и ты сам. Канон у тебя на полке (книга Котина), "
-        # DVIZHOK_NE_RESHAET_V1: место больше не назначает «позднюю добычу».
-        "кто ты и твой опыт — выше. Решаешь только ты. Место у тебя "
-        # PERVYY_UROVEN_ODIN_SIGNAL_V1: три места ушли с глаз в знания
-        "одно: конец хода — разворотный бар, который тебя разбудил. "
-        "Входишь — называешь сторону, а цену и стоп отдаёшь в ПРИКАЗЕ "
-        "стола; где стоп, какой lot — твоя рука, не рельса. Не входишь — "
-        "verdict WAIT рукой. Никто не подложит тебе готовую цену и не скажет, "
+        "Перед тобой стол и ты сам. Канон у тебя на полке, решаешь "
+        "только ты. Порядок такой: СЦЕНАРИЙ — твоя история старшего хода, "
+        "на этаже через один выше твоего (она в самом начале); МОМЕНТ — "
+        "твой этаж: разворотный бар на краю его хода, приседающий, дивер "
+        "четырьмя числами; РЕШЕНИЕ — что это за вход относительно "
+        "старшего хода. Разворотник против старшего хода — ты входишь в "
+        "откат. Твой этаж шёл против старшего хода (это его откат), и на "
+        "краю разворотник с дивером отката — ты входишь по старшему ходу. "
+        "Оба входа законны и устроены одинаково. Разворотник посреди хода "
+        "твоего этажа, без края и дивера, — передышка. "   # HOD_STARSHIY_V2
+        # HOD_MESYACA_V1: было «Место у тебя одно: конец хода —
+        # разворотный бар, который тебя разбудил» — второго режима
+        # (конец отката месяца) это не пускало (2022: шесть разворотов,
+        # ни одного продолжения).
+        "Входишь — "
+        "называешь сторону, а цену и стоп отдаёшь В ПРИКАЗЕ, рукой. "
+        "Где фракталы — на столе (факт). Цена, стоп и лот — твоя "
+        "рука, не рельса. Не "
+        "входишь — verdict WAIT рукой. Никто не подложит тебе готовую цену. "
         # PRAVILO_ZAYAVKI_V1: вход только заявкой, по рынку — нет.
         # DVIZHOK_NE_RESHAET_V1: было «железно, без исключений» с приговором
         # за неполный сигнал. Приговор снят: движок кладёт ФАКТ устройства,
@@ -1199,14 +1294,24 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         + ""
         # YAZYK_DOLIVA_V1: дописаны action/new_stop/add_lot — раньше
         # эта, самая СВЕЖАЯ строка промта молчала про ведение позиции.
-        "Выдай строго JSON {narrative, signal, diary_entry}.\n"
-        "Нет открытой позиции: signal ключи — cons_verdict "
-        "(APPROVED/REJECTED), cons_reason, cons_direction, "
-        "cons_entry, cons_stop, cons_lot.\n"
-        "Есть открытая позиция (см. блок 'position' на столе): signal "
-        "ключи — cons_action (ENTER/WAIT/HOLD/MOVE_STOP/ADD/CLOSE), "
-        "cons_reason, cons_new_stop (если MOVE_STOP), cons_add_lot "
-        "(если ADD).\n"
+        # SLOVO_NE_PRIKAZ_V2: здесь стояло «Выдай строго JSON
+        # {narrative, signal, diary_entry}» и список ключей
+        # решения — brut_verdict, brut_direction, brut_entry,
+        # brut_stop. Старый язык, времён до рук.
+        #
+        # Бумага говорит: решение в ответ не пишется, только
+        # рукой. А эта строка требовала обратного — и стояла
+        # последней, а последнее слово весит больше. Трейдер
+        # слушался её, заполнял signal и получал отказ за то,
+        # что сделал как велено. Три пробуда из четырёх шли
+        # дважды из-за одного этого противоречия.
+        "Выдай строго JSON {narrative, diary_entry}.\n"
+        # RUKA_POSLEDNIM_SLOVOM_V1: слово про руку уехало отсюда
+        # в САМЫЙ КОНЕЦ задания. Здесь, в середине, его перебивала
+        # последняя строка «Ничего вне JSON» — а рука и есть
+        # «вне JSON». Что стоит последним, то и весит больше.
+        "Решение в этот ответ не пишется — про него сказано в "
+        "самом конце.\n"
         # NABLYUDENIE_V1: третий ответ — «беру на карандаш».
         # Слово Шефа: увидел, похоже, проверил — наблюдай, если
         # видишь, что вот-вот твой сигнал. Пока наблюдаешь, тебя
@@ -1218,7 +1323,65 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         # везде, а отмечал наблюдение через раз — и город уходил,
         # не дождавшись с ним его же момента.
         "ВАЖНО про это слово: «жду», «дождусь», «пока рано» и «НАБЛЮДАЮ» — про одно и то же, но услышать город может только последнее. Если в твоём ответе есть «жду» — значит скажи и НАБЛЮДАЮ, иначе город уйдёт к другому месту, а твой момент придёт без тебя.\n"
-        "diary_entry: input, action, result(=null). Ничего вне JSON."
+        "diary_entry: input, action, result(=null).\n"
+        # RUKA_POSLEDNIM_SLOVOM_V1: здесь стояло «Ничего вне JSON»,
+        # и это была САМАЯ ПОСЛЕДНЯЯ строка задания. Она прямо
+        # запрещала то, чего город ждёт: рука — это как раз «вне
+        # JSON». Трейдер слушался и заканчивал ход рассказом.
+        #
+        # Прогон 16.09: 45 мест, руку позвал 12 раз, и все 12 —
+        # только на переспросе, где последними словами были
+        # «позови руку». Значит последними словами будут они же.
+        #
+        # Заодно снято давнее противоречие: чуть выше задание САМО
+        # просит писать MEMORY_REQUEST отдельной строкой до JSON,
+        # а «ничего вне JSON» это запрещало.
+        "Кроме строки MEMORY_REQUEST, текстом вне JSON ничего не "
+        "пиши. Рука — не текст.\n"
+        + _mesyac_polya_blok(timeframe)   # HOD_MESYACA_V1 (было: вопрос о фазе и «через этаж»)
+        + "\n=== И ПОСЛЕДНЕЕ, САМОЕ ВАЖНОЕ ===\n"
+        "Пока ты не позвал руку otdat_prikaz, ход НЕ ОКОНЧЕН. "
+        "Рассказ — это твой голос, и он нужен; но исполнитель "
+        "слышит только руку.\n"
+        "Работаешь — otdat_prikaz с ENTER: сторона, цена заявки, "
+        "стоп.\n"
+        "Не работаешь на этом баре — та же рука с WAIT и "
+        "причиной.\n"
+        # HOLD_PRI_POZICII_V1: это условие было вырезано вместе со
+        # старым блоком signal — и трейдер начал говорить HOLD без
+        # позиции, сочиняя себе основание: «я уже в SHORT».
+        "\nЭти два слова — когда на столе ПУСТО. Если позиция "
+        "открыта (блок position на столе), слова другие: HOLD — "
+        "держу, MOVE_STOP — подтянуть стоп, ADD — долить (доля "
+        "исходной), CLOSE — закрыть (доля исходной; не указана — вся).\n"
+        "ЧТО НА СТОЛЕ, ТО И ЕСТЬ ПРАВДА. Нет блока position — "
+        "позиции НЕТ, сколько бы ты её ни помнил. Сделка могла "
+        "закрыться стопом, пока тебя не будили. Память о сделке и "
+        "сама сделка — разные вещи: держать нечего, и HOLD тут "
+        "сказать не о чем.\n"
+        "Третьего нет. Не позвал руку — ничего не произошло, и в "
+        "истории это останется разговором.\n"
+        # ZNAK_HODA_I_FORMAT_V1: когда слово про руку уехало в
+        # конец, требование формата осталось в середине — и
+        # слетело: 27 ответов прозой за прогон. Теперь формат и
+        # рука стоят вместе, последними, с живым образцом.
+        "\nИ ФОРМАТ — ЗДЕСЬ ЖЕ. Рассказ отдаёшь НАСТОЯЩИМ JSON, "
+        "а не текстом, похожим на него. Ключи в кавычках, скобки "
+        "на месте, ничего лишнего вокруг. Вот образец целиком:\n"
+        '\n{"narrative": "твой голос, одно-три предложения", '
+        '"diary_entry": {"input": "что видел", "action": "что '
+        'сделал и почему", "result": null}}\n'
+        "\nНЕ ТАК: строчки вида narrative: ... и diary_entry: "
+        "{input: ...} без кавычек — это проза, а не JSON, и она "
+        "не читается.\n"
+        "Рассказ этим JSON, решение — рукой. Оба, каждый раз.\n"
+        # METKA_NA_VHODE_V1: проверка зрения. Кода нет ни на
+        # столе, ни в знаниях — только на картинке.
+        "\nИ НА ВХОДЕ — МЕТКА. В левом верхнем углу кадра стоит "
+        "код: две буквы и две цифры. Отдавая ENTER, положи его в "
+        "поле «метка». Это не формальность: кода нет ни на столе, "
+        "ни в твоих знаниях — назвать его можно, только посмотрев "
+        "на картинку. Не разглядел — так и скажи, но не выдумывай."
     )
 
     # VYBOR_METKOY_V1 + РОД ВПЕРЕДИ (как у A07): сперва ТЫ, потом стойка.
@@ -1252,12 +1415,12 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         # обёртка честно зовёт прежнее, и мозг ничего не замечает.
         # TREYDER_ZHIV_V1: обёртка в СВОЁ имя. Присваивание в `chat`
         # делало его местным на всю функцию — вызов падал всегда.
-        # RUKI_TREYDERA_V1: кадр как был, но теперь с руками — она
-        # может сама попросить числа по тому, что видит.
+        # RUKI_VSEM_V1: кадр как был, но теперь с руками — она может
+        # сама попросить числа по тому, что видит.
         _chat_glazami = _glaz_s_rukami(chat, symbol, timeframe, _SLOT,
                                        _CEH, _SELF_KEY)
         response = _chat_glazami(system=system_full, user=user_msg, knowledge=knowledge,
-                        agent_id="A08_KONSERVATOR", slot_id="trading", temperature=_my_temp())
+                        agent_id="A08_CONS", slot_id="trading", temperature=_my_temp())
     except Exception as e:
         return {"ok": False, "error": f"трейдер не смог решить: {e}",
                 "narrative": "", "signal": {}, "diary_entry": {},
@@ -1266,6 +1429,7 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
                            "bar_time": md.get("bar_time"), "point": point},
                 "table": table}
 
+    # ── 5. Парс + санитар + два следа: табло и дневник ───────
     # ═══ MEMORY_REQUEST_BIRZHA_V1 — ВОЛЯ ВСПОМНИТЬ ═══
     # Житель попросил? Копаем ЕГО память и спрашиваем СНОВА — уже зная.
     # Не просил — ничего не тратим (второго вызова просто нет).
@@ -1284,7 +1448,7 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
     except Exception as _e:
         print(f"[МОСТ] ⚠️  память не поднялась: {_e}")
 
-    narrative, _slova, diary_entry = _parse_cons(response)
+    narrative, _slova, diary_entry = _parse_brut(response)
     # SLOVO_NE_PRIKAZ_V1: решение — только с руки
     signal = _signal_ot_ruki(md.get("bar_time"), _slova)
 
@@ -1310,8 +1474,8 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
             signal = _signal_ot_ruki(md.get("bar_time"), None)
             if signal:
                 print(f"[ПЕРЕСПРОС] отдал приказ со второго раза: "
-                      f"{signal.get('cons_action')}")
-                _n2, _s2, _d2 = _parse_cons(_otvet2)
+                      f"{signal.get('brut_action')}")
+                _n2, _s2, _d2 = _parse_brut(_otvet2)
                 if _n2:
                     narrative = _n2
                 if _d2:
@@ -1328,9 +1492,12 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
     market = {"symbol": symbol, "timeframe": timeframe,
               "bar_time": md.get("bar_time"), "point": point}
 
-    _save_verdict_to_table(signal, md.get("bar_time"))
-    _append_diary(signal, diary_entry, market, table)
+    _save_verdict_to_table(signal, md.get("bar_time"))                       # ТАБЛО — для Исполнителя
+    _append_diary(signal, diary_entry, market, table)    # ДНЕВНИК — память
     stats = _update_stats(signal)
+
+    # Петля обучения НЕ здесь: трейдер учится на pnl_r при закрытии (рука
+    # дописывающая в hooks._settle). Сейчас результата ещё нет.
 
     return {
         "ok": True,
@@ -1342,6 +1509,8 @@ def run_cons(symbol: str = "XAUUSD", timeframe: str = "H4",
         "market": market,
         "table": table,
         "raw": response,
+        "фаза": _faza_s_tablo(md.get("bar_time")),   # FAZA_HODA_V1
+        "через_этаж": _cherez_s_tablo(md.get("bar_time")),   # CHEREZ_ETAZH_V1
     }
 
 
@@ -1361,8 +1530,6 @@ def _my_temp():
 # ISKRA_WAVE_MEASURE_DOSTAVKA_V1 - marker
 
 # DNEVNIK_BEZ_BUDUSHCHEGO_V1 - marker
-
-# VASYA_SVOY_RAZVOROT_V1 - marker
 
 # TREYDER_ZHIV_V1 - marker
 
@@ -1386,7 +1553,7 @@ def _my_temp():
 
 # VYBOR_SVOY_NE_KNIZHNYY_V1 - marker
 
-# RUKI_TREYDERA_V1 - marker
+# RUKI_VSEM_V1 - marker
 
 # KRAYNIYE_TOCHKI_V1 - marker
 
@@ -1445,7 +1612,7 @@ def _kto_ya() -> str:
 # Теперь решение берётся ТОЛЬКО с табло и только то, что положено
 # рукой otdat_prikaz на этом самом баре. Текст остаётся голосом.
 
-_TABLO_KEY_CONS = "cons"
+_TABLO_KEY_BRUT = "cons"
 _PRIKAZ_POLYA = ("action", "verdict", "reason", "direction", "entry",
                  "stop", "lot", "new_stop", "add_lot")
 
@@ -1464,7 +1631,7 @@ def _signal_ot_ruki(bar_time=None, slova: dict | None = None) -> dict | None:
         print(f"[РЕШЕНИЕ] табло не открылось ({_e}) — решения нет")
         return {}
 
-    v = dict((t.get(_TABLO_KEY_CONS) or {}))
+    v = dict((t.get(_TABLO_KEY_BRUT) or {}))
     otdan = bool(v.get("отдан_рукой"))
     bar_v = str(v.get("бар") or "")
 
@@ -1481,9 +1648,9 @@ def _signal_ot_ruki(bar_time=None, slova: dict | None = None) -> dict | None:
     out = {}
     for pole in _PRIKAZ_POLYA:
         if v.get(pole) is not None:
-            out["cons_" + pole] = v[pole]
-    print(f"[РЕШЕНИЕ] с руки: {out.get('cons_action')} "
-          f"{out.get('cons_direction') or ''}".rstrip())
+            out["brut_" + pole] = v[pole]
+    print(f"[РЕШЕНИЕ] с руки: {out.get('brut_action')} "
+          f"{out.get('brut_direction') or ''}".rstrip())
     return out
 
 
@@ -1547,9 +1714,16 @@ def _svoyo_blok() -> str:
         from hooks import load_trading_state as _lts
         _t = _lts() or {}
         _moi = []
+        _moy_magic = _my_magic()   # SVOYO_TOLKO_SVOYO_V1
         for _p in (_t.get("positions") or []):
             _st = str(_p.get("status") or "").upper()
             if _st not in ("OPEN", "PENDING"):
+                continue
+            # SVOYO_TOLKO_SVOYO_V1: своё — по номеру счёта места.
+            # Раньше сюда шли все заявки цеха, и Синди приняла
+            # Ильвину заявку по фунту за свою (04.12.2020).
+            if (_moy_magic is not None and _p.get("magic") is not None
+                    and _p.get("magic") != _moy_magic):
                 continue
             _n = str(_p.get("direction") or "?").upper()
             _c = _p.get("entry")
@@ -1566,7 +1740,7 @@ def _svoyo_blok() -> str:
                 + "\nВходить второй раз в то же место НЕ НАДО — рука "
                   "такой приказ и не примет. Твоя работа сейчас: "
                   "держать (HOLD), двигать стоп (MOVE_STOP), доливать "
-                  "(ADD) или закрывать (CLOSE).\n\n")
+                  "(ADD) или закрывать — всё или часть (CLOSE с долей).\n\n")
     except Exception as _e:
         print(f"[СВОЁ] не спросилось ({_e})")
         return ""
@@ -1657,23 +1831,24 @@ def _povod_blok(povod: str) -> str:
 # подменяем. Показанное идёт вторым, с подписью, чьё оно. Иначе он
 # потеряет свой этаж и станет отвечать про чужую картинку.
 
-def _kadr_shefa() -> list:
-    """Картинка со «Взгляда» Шефа, если она свежая. Иначе пусто."""
+def _kadr_shefa(razgovor: bool = True) -> list:
+    """Картинка, которую показал Шеф. В работе не подкладывается.
+
+    KARTINKA_SHEFA_V1: срок в 15 минут снят по слову Шефа —
+    показанное лежит, пока он не покажет другое. Взамен оно идёт
+    ТОЛЬКО в разговоре: в прогоне картинка ехала бы в каждое
+    место и путалась бы с рабочим кадром.
+    """
+    if not razgovor:
+        return []
     try:
         import base64
-        from datetime import datetime, timedelta
         from pathlib import Path as _P
         from hooks import load_trading_state
         v = (load_trading_state() or {}).get("vzglyad_shefa") or {}
         put = v.get("путь")
         if not put:
             return []
-        try:
-            kogda = datetime.fromisoformat(str(v.get("когда")))
-            if datetime.now() - kogda > timedelta(minutes=15):
-                return []      # старое — не всплывает посреди работы
-        except Exception:
-            pass
         p = _P(put)
         if not p.exists():
             return []
@@ -1688,6 +1863,59 @@ def _kadr_shefa() -> list:
 
 
 # VZGLYAD_DOHODIT_V1 - marker
+
+
+# ── OBRAZCY_V1: картинки-образцы из знаний ────────────────────
+# Слово Шефа 22.09: «ей видеть нужно, что я показываю, а она только
+# читает». Знания уходят к ней текстом, картинки из них не брались.
+# Теперь в знаниях есть папка образцы/: картинка + рядом .md/.txt с
+# тем же именем — пара строк, что на ней. Её кадр остаётся ПЕРВЫМ,
+# кадр Шефа (если есть) — вторым, образцы — после, с подписью.
+# Образцов не больше трёх: каждая картинка идёт в каждое пробуждение.
+OBRAZCY_DIR = KNOWLEDGE_DIR / "образцы"
+OBRAZCY_MAKS = 3
+
+
+def _obrazcy() -> list:
+    """Картинки-образцы из знания/образцы/. Нет папки — пусто."""
+    try:
+        import base64
+        if not OBRAZCY_DIR.exists():
+            return []
+        mime = {".png": "image/png", ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg", ".webp": "image/webp"}
+        kartinki = [f for f in sorted(OBRAZCY_DIR.iterdir())
+                    if f.is_file() and f.suffix.lower() in mime]
+        if len(kartinki) > OBRAZCY_MAKS:
+            print(f"[ОБРАЗЦЫ] ⚠️  в папке {len(kartinki)}, беру первые "
+                  f"{OBRAZCY_MAKS} по алфавиту")
+            kartinki = kartinki[:OBRAZCY_MAKS]
+        vyshlo = []
+        for f in kartinki:
+            podpis = ""
+            for ext in (".md", ".txt"):
+                t = f.with_suffix(ext)
+                if t.exists():
+                    try:
+                        podpis = " ".join(
+                            t.read_text(encoding="utf-8").split())
+                    except Exception:
+                        podpis = ""
+                    break
+            vyshlo.append({
+                "base64": base64.b64encode(f.read_bytes()).decode("ascii"),
+                "mime_type": mime[f.suffix.lower()],
+                "name": (f"ОБРАЗЕЦ из знаний, не твой рынок · {f.stem}"
+                         + (f" — {podpis}" if podpis else ""))})
+        if vyshlo:
+            print(f"[ОБРАЗЦЫ] в знаниях: {len(vyshlo)}")
+        return vyshlo
+    except Exception as _e:
+        print(f"[ОБРАЗЦЫ] не подложились ({_e}) — не беда")
+        return []
+
+
+# OBRAZCY_V1 - marker
 
 # NAPOMINANIE_RUKI_V1 - marker
 
@@ -1722,3 +1950,469 @@ def _gorod_skazal_hvatit() -> bool:
 # ZHIVOYE_SOOBSHCHENIE_CHISTO_V1 - marker
 
 # OKRUZHENIE_BARA_V1 - marker
+
+# BIRZHA_BEZ_TANCEV_V1 - marker
+
+# SHEF_KARTINKA_ODNA_V1 - marker
+
+# STOP_KAK_EST_V1 - marker
+
+# KLON_A06_V_A07_V2 - marker
+
+
+# ── FAZA_HODA_V1: опыт с фазами хода (второй уровень, только A07) ──
+# Слово Шефа 30.09/01.10: на каждом месте она называет фазу хода, город
+# после прогона сверяет с рынком (Биржа/fazy.py). На вход не влияет:
+# правила те же, приказ принимается и без фазы. Выжимка про волны — не
+# в знаниях (там она читалась бы на каждом взгляде как правило), а в
+# опыт/ВОЛНЫ.md и приходит только вместе с вопросом о фазе.
+
+_FAZA_VYZHIMKA = _SLOT_DIR / "опыт" / "ВОЛНЫ.md"
+
+
+def _shema_s_fazoy(shema: list) -> list:
+    """Руке приказа — пять полей фазы. Только у этого места."""
+    try:
+        for f in shema or []:
+            fn = (f or {}).get("function") or {}
+            if fn.get("name") != "otdat_prikaz":
+                continue
+            pr = fn.setdefault("parameters", {}).setdefault("properties", {})
+            pr["ход"] = {"type": "string", "description": (
+                "ОПЫТ, на вход не влияет: какой ход ты считаешь — вверх "
+                "или вниз")}
+            pr["начало_хода"] = {"type": "string", "description": (
+                "ОПЫТ: дата бара, где этот ход начался, вид "
+                "2025.05.05 20:00 (дневка — 2025.05.05)")}
+            pr["фаза"] = {"type": "string", "description": (
+                "ОПЫТ: где в этом ходе рынок сейчас — третья, четвёртая, "
+                "пятая или не знаю. Кандидат, не приговор; «не знаю» — "
+                "честный ответ")}
+            pr["уверенность"] = {"type": "string", "description": (
+                "ОПЫТ: мало, средне или уверена")}
+            pr["почему_фаза"] = {"type": "string", "description": (
+                "ОПЫТ: одной фразой, по чему видишь фазу (например, где "
+                "самый большой горб AO)")}
+    except Exception as _e:
+        print(f"[ФАЗА] поля не добавились ({_e}) — работаю без них")
+    return shema
+
+
+def _faza_blok() -> str:
+    """Вопрос о фазе + выжимка. Ставится перед последним словом про руку."""
+    try:
+        _vyzh = _FAZA_VYZHIMKA.read_text(encoding="utf-8").strip()
+    except Exception:
+        _vyzh = ""
+    return (
+        "\n=== ОПЫТ: ФАЗА ХОДА (на вход не влияет) ===\n"
+        "Это не правило и не условие входа — это опыт: видишь ли ты "
+        "волны. Торгуешь как обычно, по своим правилам.\n"
+        "В том же приказе otdat_prikaz — и при ENTER, и при WAIT — "
+        "назови:\n"
+        "  · ход — какой ход считаешь: вверх или вниз;\n"
+        "  · начало_хода — дата бара, где этот ход начался;\n"
+        "  · фаза — где в нём рынок сейчас: третья, четвёртая, пятая "
+        "или не знаю;\n"
+        "  · уверенность — мало, средне или уверена;\n"
+        "  · почему_фаза — одной фразой.\n"
+        "Волны видно, когда ход растянут на 100–140 баров: посмотри его "
+        "рукой rastyanut_volnu от начала хода.\n"
+        "«Не знаю» — честный ответ, не ошибка. Город потом сверит с тем, "
+        "что рынок сделал дальше — для опыта.\n"
+        + (("\nВЫЖИМКА ПРО ВОЛНЫ:\n" + _vyzh + "\n") if _vyzh else ""))
+
+
+def _faza_s_tablo(bar_time=None):
+    """Фаза, которую рука положила на табло на ЭТОМ баре. Нет — None."""
+    try:
+        from hooks import load_trading_state
+        v = (((load_trading_state() or {}).get(_TABLO_KEY_BRUT) or {})
+             .get("фаза") or {})
+    except Exception:
+        return None
+    if not v:
+        return None
+    _b = str(v.get("бар") or "")
+    if bar_time and _b and _b != str(bar_time):
+        return None                      # с прошлого места — не её ответ
+    return dict(v)
+
+
+# FAZA_HODA_V1 - marker
+
+
+# ── PROGON_V_TETRADI_V1: номер прогона — оттуда, где он лежит ──
+# Стол номера прогона не знает: его кладёт прогон на общую площадь
+# города. Раньше брали со стола — и каждая запись шла с пустым
+# номером, а «ТВОИ СОБЫТИЯ» в прогоне всегда были пустыми.
+def _nomer_progona(table=None):
+    try:
+        n = ((table or {}).get("прогон") or {}).get("id")
+        if n:
+            return n
+    except Exception:
+        pass
+    try:
+        from hooks import load_trading_state as _lts_pn
+        return ((_lts_pn() or {}).get("прогон") or {}).get("id")
+    except Exception:
+        return None
+
+
+# PROGON_V_TETRADI_V1 - marker
+
+# SVOYO_TOLKO_SVOYO_V1 - marker
+
+
+# ── ALLIGATOR_OPYT_V1: где ты по Аллигатору (только A08) ──────
+# Слово Шефа (05.10): «пока никаких связок — пусть называют, где они
+# сейчас по аллигатору». На вход не влияет. Город в отчёте пишет рядом,
+# где цена по линиям на самом деле (Биржа/alli_opyt.py).
+
+def _shema_s_alli(shema: list) -> list:
+    try:
+        for f in shema or []:
+            fn = (f or {}).get("function") or {}
+            if fn.get("name") != "otdat_prikaz":
+                continue
+            pr = fn.setdefault("parameters", {}).setdefault("properties", {})
+            pr["аллигатор"] = {"type": "string", "description": (
+                "ОПЫТ, на вход не влияет: где цена по Аллигатору — вверх "
+                "(выше линий), вниз (ниже линий) или внутри линий")}
+            pr["движение"] = {"type": "string", "description": (
+                "ОПЫТ, на вход не влияет: цена уходит от линий — импульс; "
+                "идёт к линиям — откат")}
+    except Exception as _e:
+        print(f"[АЛЛИГАТОР] поля не добавились ({_e})")
+    return shema
+
+
+def _alli_blok() -> str:
+    return (
+        "\n=== ОПЫТ: ГДЕ ТЫ ПО АЛЛИГАТОРУ (на вход не влияет) ===\n"
+        "Это не правило входа — наблюдение. В том же приказе otdat_prikaz "
+        "(и при ENTER, и при WAIT) назови:\n"
+        "  · аллигатор — вверх, вниз или внутри линий;\n"
+        "  · движение — импульс или откат.\n"
+        "Как читать — в твоих знаниях, «Аллигатор — где ты сейчас».\n")
+
+
+def _alli_s_tablo(bar_time=None):
+    try:
+        from hooks import load_trading_state
+        v = (((load_trading_state() or {}).get(_TABLO_KEY_BRUT) or {})
+             .get("аллигатор") or {})
+    except Exception:
+        return None
+    if not v:
+        return None
+    _b = str(v.get("бар") or "")
+    if bar_time and _b and _b != str(bar_time):
+        return None
+    return dict(v)
+
+
+# ALLIGATOR_OPYT_V1 - marker
+
+# KLON_A07_V_A08_V1 - marker
+
+# LINII_A08_V1 - marker
+
+
+# ── DVE_POLOVINY_V1: на столе — и половина города ─────────────
+# Своя половина — «твоя позиция», как раньше (по номеру счёта места).
+# Половину города ведёт город; житель её видит, но не трогает.
+_MAGIC_GORODA_A08 = 1100003
+_svoyo_blok_bez_goroda = _svoyo_blok
+
+
+def _svoyo_blok() -> str:   # noqa: F811
+    s = _svoyo_blok_bez_goroda()
+    try:
+        from hooks import load_trading_state as _lts_pg
+        stroki = []
+        for p in (_lts_pg() or {}).get("positions") or []:
+            if p.get("magic") != _MAGIC_GORODA_A08:
+                continue
+            st = str(p.get("status") or "").upper()
+            if st not in ("OPEN", "PENDING"):
+                continue
+            stroki.append(f"  · {'заявка' if st == 'PENDING' else 'позиция'} "
+                          f"{p.get('direction')} {p.get('symbol')} по {p.get('entry')}, "
+                          f"стоп {p.get('stop')}")
+        if stroki:
+            s = (s or "") + ("\n=== ПОЛОВИНА ГОРОДА (ведёт город, не ты) ===\n"
+                             + "\n".join(stroki)
+                             + "\nЕё закрывают стоп или три условия против на "
+                               "дневке. Твой CLOSE её не касается.\n")
+    except Exception as _e:
+        print(f"[ДВЕ ПОЛОВИНЫ] стол не показал половину города ({_e})")
+    return s
+
+
+# DVE_POLOVINY_V1 - marker
+
+
+# ── DOLIVKI_GORODA_V1: на столе — доливки города ──────────────
+_MAGIC_DOLIVOK_A08 = 2100003
+_svoyo_blok_bez_dolivok = _svoyo_blok
+
+
+def _svoyo_blok() -> str:   # noqa: F811
+    s = _svoyo_blok_bez_dolivok()
+    try:
+        from hooks import load_trading_state as _lts_dg
+        stroki = [f"  · {'заявка' if str(p.get('status') or '').upper() == 'PENDING' else 'в рынке'} "
+                  f"{p.get('direction')} {p.get('symbol')} по {p.get('entry')}, "
+                  f"стоп {p.get('stop')}"
+                  for p in (_lts_dg() or {}).get("positions") or []
+                  if p.get("magic") == _MAGIC_DOLIVOK_A08
+                  and str(p.get("status") or "").upper() in ("OPEN", "PENDING")]   # DOLIVKA_DZHEMA_V1
+        if stroki:
+            s = (s or "") + ("\n=== ДОЛИВКИ ГОРОДА (доливает город, не ты) ===\n"
+                             + "\n".join(stroki)
+                             + "\nЗакрываются вместе с твоей сделкой или по своему стопу. "
+                               "Город доливает один раз — на пробой откатной вершины часовика. "
+                               "Больше одной не будет.\n")
+    except Exception as _e:
+        print(f"[ДОЛИВКИ ГОРОДА] стол не показал доливки ({_e})")
+    return s
+
+
+# DOLIVKI_GORODA_V1 - marker
+
+
+# ── CHEREZ_ETAZH_V1: через этаж — импульс или откат (только A08) ──
+# Слово Шефа (07.10): «пусть через этаж смотрит и говорит. От
+# Аллигатора — импульс, к Аллигатору — откат». На вход не влияет.
+_CHEREZ_LESENKA = ("H1", "H4", "D1", "W1", "MN1")
+_CHEREZ_IMENA = {"H1": "часовик", "H4": "четырёхчасовик", "D1": "дневка",
+                 "W1": "неделя", "MN1": "месяц"}
+
+
+def _cherez_etazh(tf) -> str:
+    tf = str(tf or "").upper()
+    if tf not in _CHEREZ_LESENKA:
+        return ""
+    i = _CHEREZ_LESENKA.index(tf) + 2
+    return _CHEREZ_LESENKA[i] if i < len(_CHEREZ_LESENKA) else ""
+
+
+def _shema_s_cherez(shema: list) -> list:
+    try:
+        for f in shema or []:
+            fn = (f or {}).get("function") or {}
+            if fn.get("name") != "otdat_prikaz":
+                continue
+            pr = fn.setdefault("parameters", {}).setdefault("properties", {})
+            pr["через_этаж_ход"] = {"type": "string", "description": (
+                "ОПЫТ, на вход не влияет: ГЛАВНЫЙ ТРЕНД — по всему окну этажа "
+                "через один выше твоего (для дневки — месяц), не по последней "
+                "свече: вверх, вниз или нет тренда")}
+            pr["через_этаж"] = {"type": "string", "description": (
+                "ОПЫТ, на вход не влияет: МОМЕНТ — твой этаж идёт по главному "
+                "тренду или это откат против него; или не знаю")}
+            pr["ожидание"] = {"type": "string", "description": (
+                "ОПЫТ, на выход не влияет: что ждёшь от этой сделки — ход "
+                "будет быстрым или долгим; или не знаю. Пиши при ENTER и HOLD")}
+            pr["доля"] = {"type": "number", "description": (
+                "при CLOSE: какую долю ИСХОДНОЙ позиции закрываешь, от 0.1 до 1; "
+                "не указана — вся")}
+            pr["долить"] = {"type": "number", "description": (
+                "при ADD: объём ноги — доля ИСХОДНОЙ позиции (0.1–1), только "
+                "в плюсе, не больше предыдущей ноги; после долива худший "
+                "исход по стопу не хуже −1 исходного риска")}
+    except Exception as _e:
+        print(f"[ЧЕРЕЗ ЭТАЖ] поля не добавились ({_e})")
+    return shema
+
+
+def _cherez_blok(timeframe=None) -> str:
+    et = _cherez_etazh(timeframe)
+    if not et:
+        return ""
+    return (
+        "\n=== ОПЫТ: ГЛАВНЫЙ ТРЕНД И МОМЕНТ (на вход не влияет) ===\n"
+        f"Открой этаж {et} ({_CHEREZ_IMENA.get(et, et)}) — рукой "
+        f"pokazat_etazh или stol_na_etazhe — и смотри ВСЁ окно: весь рисунок, "
+        "а не последнюю свечу. Откат, который вышел за линии в другую "
+        "сторону, главного тренда не меняет.\n"
+        "В том же приказе otdat_prikaz (при любом слове) назови:\n"
+        "  · через_этаж_ход — главный тренд: вверх, вниз или нет тренда;\n"
+        "  · через_этаж — момент: твой этаж идёт по тренду или это откат "
+        "против него;\n"
+        "  · ожидание — что ждёшь от этой сделки: быстро или долго. Пиши "
+        "при ENTER и HOLD; на выход не влияет.\n"
+        "Как читать — в знаниях, «Компас». Не видно — «не знаю», это "
+        "честный ответ.\n")
+
+
+def _cherez_s_tablo(bar_time=None):
+    try:
+        from hooks import load_trading_state
+        v = (((load_trading_state() or {}).get(_TABLO_KEY_BRUT) or {})
+             .get("через_этаж") or {})
+    except Exception:
+        return None
+    if not v:
+        return None
+    _b = str(v.get("бар") or "")
+    if bar_time and _b and _b != str(bar_time):
+        return None
+    return dict(v)
+
+
+# CHEREZ_ETAZH_V1 - marker
+
+# BEZ_ALLI_SVOEGO_V1 - marker
+
+# DOLIVKA_DZHEMA_V1 - marker
+
+# DOLIVKA_STOP_GORODA_V1 - marker
+
+# ODNA_DOLIVKA_V1 - marker
+
+# KOMPAS_OKNO_V1 - marker
+
+# OZHIDANIE_V1 - marker
+
+# OZH_BEZ_PODSKAZKI_V1 - marker
+
+# DVE_KNIGI_V1 - marker
+
+# DVE_KNIGI_V2 - marker
+
+# GOROD_SMOTRIT_V1 - marker
+
+
+# ── HOD_MESYACA_V1: сценарий — история хода месяца (только A08) ──
+# Слово Шефа 13.10 вечер и 14.10: «идёт ход — куда? что делает? давно? — это
+# на месяце»; «делай как по канону, пусть работает, бумаги — без противоречий».
+# В задании первым — его история хода месяца (хранит город, Биржа/
+# hod_mesyaca.py), потом момент на дневке и счёт дивера города фактом, потом
+# решение. Вопрос о фазе и старый «через этаж» из задания сняты: два разных
+# «хода» на разных этажах у него слипались (как с Аллигатором 07.10).
+# _faza_blok, _shema_s_fazoy и _cherez_blok в файле остались, но не зовутся.
+def _hod_mesyaca_blok(symbol, timeframe, bar_time=None) -> str:
+    try:
+        import hod_mesyaca as _hm
+        return _hm.blok(_SLOT, symbol, timeframe, bar_time)
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] блок не сложился ({_e})")
+        return ""
+
+
+def _diver_goroda_blok(symbol, timeframe) -> str:
+    try:
+        import hod_mesyaca as _hm
+        return _hm.diver_goroda(_SLOT, symbol, timeframe)
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] счёт дивера не лёг на стол ({_e})")
+        return ""
+
+
+def _metka_sdelki(symbol, poz) -> str:
+    try:
+        import hod_mesyaca as _hm
+        return _hm.metka_pozicii(_SLOT, symbol, (poz or {}).get("direction"))
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] пометка сделки не легла ({_e})")
+        return ""
+
+
+def _shema_s_mesyacem(shema: list, timeframe="D1") -> list:   # HOD_STARSHIY_V2
+    shema = _shema_s_cherez(shema)          # ожидание, доля, долить — как были
+    try:
+        import hod_mesyaca as _hm
+        for f in shema or []:
+            fn = (f or {}).get("function") or {}
+            if fn.get("name") != "otdat_prikaz":
+                continue
+            pr = fn.setdefault("parameters", {}).setdefault("properties", {})
+            for _k in ("через_этаж_ход", "через_этаж", "месяц_ход", "месяц_делает",
+                       "месяц_с", "месяц_изменилось"):
+                pr.pop(_k, None)
+            pr.update(_hm.polya_shemy(timeframe))   # старший этаж — от рабочего
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] поля не добавились ({_e})")
+    try:   # SVERKA_S_GORODOM_V1: рука сверки с городом
+        import hod_mesyaca as _hm2
+        shema = list(shema or []) + [_hm2.ruka_sverki_shema()]
+    except Exception as _e2:
+        print(f"[СВЕРКА] рука не добавилась ({_e2})")
+    return shema
+
+
+def _mesyac_polya_blok(timeframe="D1") -> str:   # HOD_STARSHIY_V2
+    try:
+        import hod_mesyaca as _hm
+        return _hm.polya_blok(timeframe)
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] поля сценария не легли ({_e})")
+        return ""
+
+
+_svoyo_blok_bez_fakta = _svoyo_blok
+
+
+def _svoyo_blok() -> str:   # noqa: F811  HOD_MESYACA_V1: у висящей заявки — факт города
+    s = _svoyo_blok_bez_fakta()
+    try:
+        import hod_mesyaca as _hm
+        from hooks import load_trading_state as _lts_hm
+        _moy = _my_magic()
+        for _p in (_lts_hm() or {}).get("positions") or []:
+            if str(_p.get("status") or "").upper() != "PENDING":
+                continue
+            if _p.get("доливка_города") or _pole_mesta(_p, "доливка_места"):
+                continue
+            if _moy is not None and _p.get("magic") != _moy:
+                continue
+            _f = _hm.fakt_zayavki(_SLOT, _p.get("symbol"), _p,
+                                  _p.get("timeframe") or "D1")
+            if _f:
+                s = (s or "") + _f + "\n"
+    except Exception as _e:
+        print(f"[ХОД МЕСЯЦА] факт по заявке не лёг ({_e})")
+    return s
+
+
+# HOD_MESYACA_V1 - marker
+# HOD_STARSHIY_V2 - marker
+# SVERKA_S_GORODOM_V1 - marker
+
+
+# ── PROVOZHAYU_V1: в сделке провожает ход — поле в приказе (только слова) ──
+# Слово Шефа 18.10. Правило и текст живут в Биржа/vedenie_sdelki.py,
+# здесь только дверь: поле «провожаю» в руке приказа.
+_shema_bez_provozhayu = _shema_s_mesyacem
+
+
+def _shema_s_mesyacem(shema: list, timeframe="D1") -> list:   # noqa: F811
+    shema = _shema_bez_provozhayu(shema, timeframe)
+    try:
+        import vedenie_sdelki as _vs_pr
+        for f in shema or []:
+            fn = (f or {}).get("function") or {}
+            if fn.get("name") == "otdat_prikaz":
+                (fn.setdefault("parameters", {}).setdefault("properties", {})
+                 .update(_vs_pr.polya_shemy()))
+    except Exception as _e_pr:
+        print(f"[ПРОВОЖАЮ] поле не добавилось ({_e_pr})")
+    return shema
+
+
+# PROVOZHAYU_V1 - marker
+
+
+# ══ MESTO_BEZ_IMENI_V1 — поле места: новое имя, старые записи читаются ══
+def _pole_mesta(d, imya):
+    try:
+        import mesto_urovnya as _mu_p
+        return _mu_p.pole(d, imya)
+    except Exception:
+        return (d or {}).get(imya)
+
+
+# MESTO_BEZ_IMENI_V1 - marker

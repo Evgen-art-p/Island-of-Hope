@@ -96,7 +96,11 @@ def _put_stola() -> Path:
     p = d / "trading_state.json"
     if not _TEKUSHCHIY_CEH:
         return p
-    if not p.exists() and STATE_PATH.exists():
+    # PUSTOY_STOL_V1 / PASPORT_KONTORY_V1: общий стол переезжает только в
+    # старый цех — он с него и начинался. Новый цех начинает с чистой
+    # страницы: чужие позиции и чужие решения ему не достаются.
+    if (not p.exists() and STATE_PATH.exists()
+            and _TEKUSHCHIY_CEH == "торговый_хаос"):
         try:
             d.mkdir(parents=True, exist_ok=True)
             p.write_text(STATE_PATH.read_text(encoding="utf-8"),
@@ -175,7 +179,7 @@ def save_trading_state(tstate: dict):
             p.write_text(_tekst_st, encoding="utf-8")
     except Exception:
         p.write_text(_tekst_st, encoding="utf-8")
-    print(f"[STATE] 💾 стол сохранён ({_TEKUSHCHIY_CEH or 'общий'}): "
+    print(f"[STATE] 💾 стол сохранён ({ceh_seychas() or 'общий'}): "
           f"t1={tstate['iskra']['t1_status']}, "
           f"позиций={len(tstate['positions'])}")
 
@@ -570,6 +574,23 @@ def _treyling_za_zubami(state: dict):
     for pos in live:
         if pos.get("status") != "OPEN":
             continue
+        # TREYL_SVOYA_PARA_V1: Зубы и цена — того рынка, на месте
+        # которого стоит город. Чужую пару (и чужой этаж) ими не
+        # тянем: 2023 — стоп шорта Ильвы по фунту получил Зубы евро
+        # (1.0961) и закрылся на фальшивые +24R.
+        _psym = str(pos.get("symbol") or "").strip().upper()
+        _msym = str(md.get("symbol") or "").strip().upper()
+        if _psym and _msym and _psym != _msym:
+            continue
+        _ptf = str(pos.get("timeframe") or "").strip().upper()
+        _mtf = str(md.get("timeframe") or "").strip().upper()
+        if _ptf and _mtf and _ptf != _mtf:
+            continue
+        if pos.get("половина") in ("города", "доливка"):   # DVE_POLOVINY_V1 DOLIVKI_GORODA_V1
+            continue
+        if (pos.get("magic") in GOROD_VEDYOT_MAGIC
+                or pos.get("magic") in STOP_STOIT_MAGIC):   # DVE_KNIGI_V2: стоп стоит у обеих книг
+            continue
         direction = (pos.get("direction") or "").upper()
         old = pos.get("stop")
         entry = pos.get("entry")
@@ -815,7 +836,7 @@ def _pereezd_zayavki(pos, md):
     cur_low = price.get("low")
     point = md.get("point") or 0.01
     sp_pts = (md.get("mfi", {}) or {}).get("spread")
-    sp = (float(sp_pts) * float(point)) if sp_pts is not None else 0.0
+    sp = _spred_zdravyy_cena(sp_pts, point)   # SPRED_ZDRAVYY_V1
 
     if close is None:
         return None
@@ -1086,6 +1107,10 @@ def _aktivirovat_ordera(state: dict):
         if pos.get("status") != "PENDING":
             ostalis.append(pos)
             continue
+        # DOLIVKI_TRI_V1: заявку второй доливки ведёт своё правило (_dt_zayavki)
+        if pos.get("доливка_разворотник"):
+            ostalis.append(pos)
+            continue
 
         d = (pos.get("direction") or "").upper()
         entry = pos.get("entry")
@@ -1111,6 +1136,18 @@ def _aktivirovat_ordera(state: dict):
                     (d == "SHORT" and low  <= entry))
 
         if srabotal:
+            # GOROD_VEDYOT_A08_V1: стол не дарит цену. Бар открылся уже
+            # за заявкой — рынок ушёл, вход по открытию бара, а не по
+            # цене, которой в этот день уже не было.
+            _otkr = price.get("open")
+            if isinstance(_otkr, (int, float)) and (
+                    (d == "LONG" and _otkr > entry)
+                    or (d == "SHORT" and _otkr < entry)):
+                print(f"[ОРДЕР] ⚠️  {pos.get('trader')} {d}: заявка {entry} "
+                      f"уже за рынком — вход по открытию бара {_otkr}")
+                pos["entry_zayavki"] = entry
+                pos["entry"] = round(_otkr, 6)
+                entry = pos["entry"]
             pos["status"] = "OPEN"
             pos["opened_at"] = bar_time      # ВРЕМЯ РЕАЛЬНОГО ВХОДА
             # POCHINIT_SCHYOT_R_V1: запоминаем риск НА ВХОДЕ.
@@ -1126,6 +1163,19 @@ def _aktivirovat_ordera(state: dict):
             print(f"[ОРДЕР] ⚡ {pos.get('trader')} {d} АКТИВИРОВАН @ {entry} "
                   f"— рынок дошёл (H={high} L={low})")
             ostalis.append(pos)
+            if pos.get("magic") in STOP_STOIT_MAGIC and not pos.get("доливка_города"):   # DVE_KNIGI_V2 MESTO_DZHEMA_V1
+                import copy as _cp_kn
+                _tw = _cp_kn.deepcopy(pos)
+                for _k in ("manual_close", "закрыл_город", "колокол", "_колокол_звенел"):
+                    _tw.pop(_k, None)
+                _tw.update({"magic": _nomer_teni(pos.get("magic")), "trader": "ГОРОД",   # MESTO_DZHEMA_V1
+                            "половина": "города", "книга": "города",
+                            "тень": True})   # GOROD_SMOTRIT_V1: не сделка, город только смотрит
+                pos["книга"] = "места"
+                ostalis.append(_tw)
+                print(f"[ГОРОД СМОТРИТ] 👁 тень позиции места (не сделка): {d} @ {entry}, "
+                      f"стоп {pos.get('stop')} — magic {_tw.get('magic')}; "
+                      f"позиция места — magic {pos.get('magic')}")
             continue
 
         # PEREEZD_ZAYAVKI_V1: не пробил — сверяем со СТРУКТУРОЙ (Вильямс).
@@ -1136,6 +1186,13 @@ def _aktivirovat_ordera(state: dict):
             dirty = True
             continue          # снять заявку совсем
         if _pz == "MOVED":
+            # ZAYAVKA_SLED_BAR_V2: переехавшая заявка тоже ждёт СЛЕДУЮЩЕГО
+            # бара. Уровни сняты с нового разворотника — он накрывает их
+            # по построению. 26.09.2024 (прогон 01.10): заявка переехала
+            # на новый бар, тот же бар «дошёл» до входа и до стопа, и
+            # верная сделка стала минус R арифметикой, а не рынком.
+            pos["_ждёт_с"] = str(bar_time or "")
+            _zapas_posle_pereezda(pos)
             print(f"[ОРДЕР] 🔄 {pos.get('trader')} {d} ПЕРЕЕХАЛ @ "
                   f"{pos.get('entry')} — новый фрактал по тренду, стоп "
                   f"{pos.get('stop')} (Вильямс §8)")
@@ -1179,9 +1236,7 @@ def _spread_price(chain: dict) -> float:
     md = chain.get("market_data", {}) or {}
     point = md.get("point") or 0.01
     spread_pts = (md.get("mfi", {}) or {}).get("spread")
-    if spread_pts is None:
-        spread_pts = 0.0
-    return float(spread_pts) * float(point)
+    return _spred_zdravyy_cena(spread_pts, point)   # SPRED_ZDRAVYY_V1
 
 
 def _otlozhka_entry_stop(order: dict, chain: dict):
@@ -1239,7 +1294,8 @@ def _otlozhka_entry_stop(order: dict, chain: dict):
 _VNUTRI_KESH: dict = {}
 
 
-def _vnutri_bara(symbol, timeframe, bar_time, direction, entry, stop):
+def _vnutri_bara(symbol, timeframe, bar_time, direction, entry, stop,
+                 s_chasa=None, s_shag=60):   # LYUBOY_ETAZH_V1: s_shag — минут в свече доливки   # VNUTRI_DNEVKI_V1: s_chasa — час входа доливки
     """→ ("стоп", когда) | ("живёт", когда_вход) | (None, почему)."""
     try:
         from datetime import datetime as _dtv, timedelta as _tdv
@@ -1249,15 +1305,32 @@ def _vnutri_bara(symbol, timeframe, bar_time, direction, entry, stop):
     except Exception as e:
         return None, f"нечем смотреть ({e})"
     minut = {"H1": 60, "H2": 120, "H4": 240, "H6": 360, "H8": 480,
-             "H12": 720, "D1": 1440}.get(str(timeframe or "").upper())
+             "H12": 720, "D1": 1440, "W1": 10080}.get(str(timeframe or "").upper())
     if not minut or entry is None or stop is None:
         return None, "этаж не тот"
-    try:
-        t0 = _dtv.strptime(str(bar_time)[:16], "%Y.%m.%d %H:%M")
-    except Exception:
+    # VNUTRI_DNEVKI_V1: у дневного бара в дате нет часов — читаем и так
+    t0 = None
+    for _f, _n in (("%Y.%m.%d %H:%M", 16), ("%Y.%m.%d", 10)):
+        try:
+            t0 = _dtv.strptime(str(bar_time).strip()[:_n], _f)
+            break
+        except Exception:
+            pass
+    if t0 is None:
         return None, "время бара не читается"
     t1 = t0 + _tdv(minutes=minut)
     s0, s1 = t0.strftime("%Y.%m.%d %H:%M"), t1.strftime("%Y.%m.%d %H:%M")
+    # VNUTRI_DNEVKI_V1: доливка вошла в известный час — до него её не было.
+    # Стоп смотрим со следующего часа, как в замере.
+    _uzhe = None
+    if s_chasa:
+        try:
+            _tz = (_dtv.strptime(str(s_chasa).strip()[:16], "%Y.%m.%d %H:%M")
+                   + _tdv(minutes=int(s_shag or 60)))   # LYUBOY_ETAZH_V1
+            s0 = _tz.strftime("%Y.%m.%d %H:%M")
+            _uzhe = str(s_chasa).strip()[:16]
+        except Exception:
+            pass
     long_ = str(direction).upper() == "LONG"
     for mlad, m_min in (("M15", 15), ("H1", 60)):
         if m_min >= minut:
@@ -1282,8 +1355,12 @@ def _vnutri_bara(symbol, timeframe, bar_time, direction, entry, stop):
             vn.append(bars[i])
             i += 1
         if not vn:
+            # VNUTRI_DNEVKI_V1: после входа доливки до конца дня свечей
+            # нет, а сама история этот день покрывает — стопа не было
+            if _uzhe and daty and daty[0] <= s0 <= daty[-1]:
+                return "живёт", f"{mlad}: вход {_uzhe}, до конца дня свечей нет"
             continue
-        aktiv = None
+        aktiv = _uzhe   # VNUTRI_DNEVKI_V1: доливка уже в рынке
         for b in vn:
             vh = (b["high"] >= entry) if long_ else (b["low"] <= entry)
             st = (b["low"] <= stop) if long_ else (b["high"] >= stop)
@@ -1370,6 +1447,20 @@ def _settle_positions(state: dict):
         # КАМЕНЬ 3: воля трейдера (CLOSE) — раньше стопа и колокола.  # EXECUTOR_MANAGE_HAND_V1
         if pos.get("manual_close") and close is not None:
             exit_price, reason = close, "MANUAL_CLOSE"
+            # RESHIL_ZAKRYL_V1: житель решил на своём баре — закрыт по цене того бара
+            _po_rz = pos.get("закрыть_по")
+            if isinstance(_po_rz, (int, float)) and not pos.get("закрыл_город"):
+                exit_price = _po_rz
+                print(f"[РЕШИЛ — ЗАКРЫЛ] {pos.get('trader')} {direction}: по цене "
+                      f"решения {_po_rz} (бар {pos.get('закрыть_на_баре') or '?'})")
+            if pos.get("закрыл_город"):   # DVE_POLOVINY_V1
+                reason = "CITY_RULES"
+                # GOROD_VEDYOT_A08_V1: стоп задет на этом же баре — как в
+                # замере, стоп первым (худший вариант).
+                if ((direction == "LONG" and low is not None and low <= stop)
+                        or (direction == "SHORT" and high is not None
+                            and high >= stop)):
+                    exit_price, reason = stop, "STOP_LOSS"
         # Стоп — зеркально по направлению
         if reason is None and direction == "LONG" and low is not None and low <= stop:
             exit_price, reason = stop, "STOP_LOSS"
@@ -1380,7 +1471,9 @@ def _settle_positions(state: dict):
         if (reason == "STOP_LOSS"
                 and str(pos.get("opened_at") or "") == str(bar_time)):
             _vv, _kak = _vnutri_bara(symbol, timeframe, bar_time,
-                                     direction, entry, stop)
+                                     direction, entry, stop,
+                                     s_chasa=pos.get("открыта_час"),   # VNUTRI_DNEVKI_V1
+                                     s_shag=pos.get("открыта_шаг") or 60)   # LYUBOY_ETAZH_V1
             if _vv == "живёт":
                 exit_price, reason = None, None
                 print(f"[ВНУТРИ БАРА] 🔍 {pos.get('trader')} {direction}: "
@@ -1405,7 +1498,8 @@ def _settle_positions(state: dict):
             _zvon = ((direction == "LONG" and bell)
                      or (direction == "SHORT"
                          and bool(md.get("divergence_ao"))))
-            if _zvon and not pos.get("_колокол_звенел"):
+            if (_zvon and not pos.get("_колокол_звенел")
+                    and pos.get("magic") not in GOROD_VEDYOT_MAGIC):   # GOROD_VEDYOT_A08_V1
                 pos["колокол"] = bar_time
                 print(f"[КОЛОКОЛ] 🔔 {pos.get('trader')} {direction}: "
                       f"звонит — будим трейдера, решает она")
@@ -1456,10 +1550,23 @@ def _settle_positions(state: dict):
                 f"(если есть — была активна отложка/переезд)"
             )
         pnl_r     = round(pnl_price / risk, 4) if risk > 0 else None
+        # DVE_POLOVINY_V1: половина — это половина сделки: вес ½.
+        _r_pol = pnl_r
+        _dolya = pos.get("доля")
+        if _dolya:
+            try:
+                pnl_price = round(pnl_price * float(_dolya), 6)
+                if pnl_r is not None:
+                    pnl_r = round(pnl_r * float(_dolya), 4)
+            except (TypeError, ValueError):
+                pass
 
         record = {
             "ts":         datetime.now().isoformat(),
-            "closed_at":  bar_time,
+            "closed_at":  (pos.get("закрыть_на_баре") or bar_time)   # RESHIL_ZAKRYL_V1
+                          if (reason == "MANUAL_CLOSE"
+                              and isinstance(pos.get("закрыть_по"), (int, float))
+                              and not pos.get("закрыл_город")) else bar_time,
             "symbol":     symbol,
             "timeframe":  timeframe,
             "trader":     pos.get("trader"),
@@ -1476,6 +1583,12 @@ def _settle_positions(state: dict):
             "close_reason": reason,
             "pnl_price":  pnl_price,
             "pnl_r":      pnl_r,
+            "половина":   pos.get("половина"),   # DVE_POLOVINY_V1
+            "R_половины": _r_pol,
+            "доля":       pos.get("доля"),            # DVE_KNIGI_V2
+            "книга":      pos.get("книга"),           # DVE_KNIGI_V2
+            "нога":       bool(_pole_mesta(pos, "нога_места")),     # DVE_KNIGI_V2
+            "частичное":  bool(pos.get("_частичное")),     # DVE_KNIGI_V2
         }
         closed.append(record)
 
@@ -1484,7 +1597,7 @@ def _settle_positions(state: dict):
         # третьего думает, то ли она делает». Счётчик живёт при точке:
         # новая точка — новый счёт с нуля. Город не запрещает четвёртый
         # вход, он только говорит вслух то, что трейдер и сам заметил.
-        if reason == "STOP_LOSS":
+        if reason == "STOP_LOSS" and not pos.get("доливка_города"):   # DOLIVKI_GORODA_V1
             try:
                 _t = load_trading_state()
                 _isk = _blok_tochki(
@@ -1525,8 +1638,9 @@ def _settle_positions(state: dict):
         # доводом, хотя стоило −1.0R. Дневник без результата —
         # список намерений, а не опыт.
         try:
-            _dopisat_v_dnevnik(pos.get("trader"), entry,
-                               pnl_r, reason, bar_time)
+            if not (_pole_mesta(pos, "нога_места") or pos.get("_частичное")):   # DVE_KNIGI_V2
+                _dopisat_v_dnevnik(pos.get("trader"), entry,
+                                   pnl_r, reason, bar_time)
         except Exception as _de:
             print(f"[ТЕТРАДЬ] ⚠️  {_de}")
 
@@ -1595,6 +1709,7 @@ def _settle_positions(state: dict):
             "причина": _p.get("close_reason"),
             "выход": _p.get("exit"),
             "pnl": _p.get("pnl_price"),
+            "книга": _p.get("книга"),   # DVE_KNIGI_V2
         }
         save_trading_state(tstate)
         print(f"[SETTLE] 📒 Закрыто: {len(closed)}, осталось: {len(still_open)}")
@@ -2658,6 +2773,11 @@ def _vesti_stopy(md: dict) -> int:
             _psym = (pos.get("symbol") or "").strip().upper()
             if _psym and _bar_sym and _psym != _bar_sym:
                 continue          # чужой рынок — не наше дело
+            if pos.get("половина") in ("города", "доливка"):   # DVE_POLOVINY_V1 DOLIVKI_GORODA_V1
+                continue
+            if (pos.get("magic") in GOROD_VEDYOT_MAGIC
+                    or pos.get("magic") in STOP_STOIT_MAGIC):   # DVE_KNIGI_V2: стоп стоит у обеих книг
+                continue
             napr = (pos.get("direction") or "").upper()
             stop = pos.get("stop")
             if stop is None:
@@ -3136,6 +3256,11 @@ def rynok_novyy_bar(symbol: str, timeframe: str,
     # она дала −6.1R против −15.3R у фракталов своего этажа и
     # −46.4R у неподвижного стопа. Лучшее ведение лежало
     # выключенным.
+    try:   # DVE_POLOVINY_V1: правила дневки против — до трейлинга и стопов
+        _gorod_vedyot_polovinu(cd, bars, symbol, timeframe, _p)
+    except Exception as e:
+        print(f"[ДВЕ ПОЛОВИНЫ] ⚠️  половина города не проверилась ({e})")
+    # CHISTKA_DOLIVOK_V1: доливок города больше нет
     try:
         _treyling_za_zubami(state)
     except Exception as e:
@@ -3246,3 +3371,466 @@ def _slot_sushchestvuet(ceh: str):
 # VERSHINA_NE_NIZHE_KRAYA_V1 - marker
 
 # AC_VON_V1 - marker
+
+
+# ── ZAYAVKA_SLED_BAR_V2: запас стопа и после переезда ─────────
+# При рождении заявки стоп отодвигают на пятую часть риска (слово
+# Шефа 26.09). Переезд ставил стоп ровно на край разворотника — запас
+# терялся. Тот же запас, той же мерой.
+def _zapas_posle_pereezda(pos):
+    try:
+        e = float(pos.get("entry"))
+        s = float(pos.get("stop"))
+        risk = abs(s - e)
+        if risk <= 0:
+            return
+        d = (pos.get("direction") or "").upper()
+        novyy = round(s + risk / 5 if d == "SHORT" else s - risk / 5, 6)
+        print(f"[СТОП] 🛡 {pos.get('trader')} {d}: стоп {s} → {novyy} — "
+              f"запас пятая часть риска (после переезда)")
+        pos["stop"] = novyy
+        pos["stop_initial"] = novyy
+    except Exception as _e:
+        print(f"[СТОП] запас после переезда не поставился ({_e})")
+
+
+# ZAYAVKA_SLED_BAR_V2 - marker
+
+# TREYL_SVOYA_PARA_V1 - marker
+
+
+# ── DVE_POLOVINY_V1: город ведёт свою половину ────────────────
+# Половина города закрывается, когда на её этаже сошлись три условия
+# ПРОТИВ позиции: разворотник против (в последних трёх барах), приседающий
+# в окне трёх баров до него, дивер AO по сверке города. Флаг ставится
+# здесь, закрывает _settle_positions по закрытию этого же бара.
+def _gorod_vedyot_polovinu(cd: dict, bars: list, symbol: str,
+                           timeframe: str, point) -> int:
+    pos_list = cd.get("open_positions") or []
+    sym = str(symbol or "").strip().upper()
+    tf = str(timeframe or "").strip().upper()
+    nashi = [p for p in pos_list
+             if (p.get("половина") == "города"
+                 or p.get("magic") in GOROD_VEDYOT_MAGIC)   # GOROD_VEDYOT_A08_V1
+             and p.get("status") == "OPEN"
+             and str(p.get("symbol") or "").strip().upper() == sym
+             and str(p.get("timeframe") or "").strip().upper() in ("", tf)
+             and not p.get("manual_close")]
+    if not nashi or not bars or len(bars) < 40:
+        return 0
+    from williams_core import (compute_alligator, compute_ao_series,
+                               vse_necron, detect_squat_bars)
+    import sverka_divera as _sd
+    hi = [b["high"] for b in bars]
+    lo = [b["low"] for b in bars]
+    n = len(bars)
+    al = compute_alligator(hi, lo, point=point)
+    nec = {}
+    for r in vse_necron(bars, al.get("jaw_series"), al.get("teeth_series"),
+                        al.get("lips_series"), s=max(1, n - 8)):
+        nec[r["i"]] = r["сторона"]
+    try:
+        sq = {s.get("bar_index") for s in
+              (detect_squat_bars(bars, point=point).get("all") or [])}
+    except Exception:
+        sq = set()
+    ao = compute_ao_series(hi, lo)
+    a = max(0, n - 300)
+    ao_o, hi_o, lo_o, b_o = ao[a:], hi[a:], lo[a:], bars[a:]
+    vid = list(range(max(0, len(ao_o) - 140), len(ao_o)))
+    zakryto = 0
+    for p in nashi:
+        napr = str(p.get("direction") or "").upper()
+        protiv = "BULL" if napr == "SHORT" else "BEAR"
+        j = n - 1
+        i_nec = next((i for i in range(j, j - 4, -1) if nec.get(i) == protiv), None)
+        if i_nec is None:
+            continue
+        if not any((i_nec - 3) <= k <= i_nec for k in sq if k is not None):
+            continue
+        try:
+            r = _sd.dve_gorki(ao_o, hi_o, lo_o, vid, protiv == "BEAR", b_o)
+        except Exception as e:
+            print(f"[ДВЕ ПОЛОВИНЫ] сверка не посчиталась ({e})")
+            continue
+        if not r.get("est"):
+            continue
+        p["manual_close"] = True
+        p["закрыл_город"] = True
+        zakryto += 1
+        _kto_v = ("[ВЫХОД ГОРОДА] 🏙 позиция"   # GOROD_VEDYOT_A08_V1
+                  if p.get("magic") in GOROD_VEDYOT_MAGIC
+                  else "[ДВЕ ПОЛОВИНЫ] 🏙 половина города")
+        print(f"{_kto_v} {napr} {p.get('entry')}: "
+              f"на {tf} сошлись три условия против — закрываю по закрытию бара")
+    if zakryto:
+        try:
+            t = load_trading_state()
+            ids = {(p.get("magic"), p.get("entry"), p.get("opened_at"))
+                   for p in nashi if p.get("закрыл_город")}
+            for p in t.get("positions") or []:
+                if (p.get("magic"), p.get("entry"), p.get("opened_at")) in ids:
+                    p["manual_close"] = True
+                    p["закрыл_город"] = True
+            save_trading_state(t)
+        except Exception as e:
+            print(f"[ДВЕ ПОЛОВИНЫ] отметку не сохранил ({e}) — закрою по столу")
+    return zakryto
+
+
+# DVE_POLOVINY_V1 - marker
+
+
+# ── SPRED_ZDRAVYY_V1: спред из истории — только здравый ──────
+# 28.04.2011 (житель, вершина фунта за год): в дневной истории записан
+# огромный спред — бар открывается на переходе дня. Его прибавляли к
+# краям бара, и заявка со стопом уезжали. Больше SPRED_MAKS_PUNKTOV —
+# сломан: берём 3 пункта, как стол по умолчанию.
+SPRED_MAKS_PUNKTOV = 50
+_SPRED_SKAZANO = set()
+
+
+def _spred_zdravyy_cena(sp_pts, point) -> float:
+    try:
+        point = float(point or 0.01)
+    except (TypeError, ValueError):
+        point = 0.01
+    try:
+        sp = float(sp_pts) if sp_pts not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        sp = 0.0
+    if sp > SPRED_MAKS_PUNKTOV:
+        k = round(sp)
+        if k not in _SPRED_SKAZANO:
+            _SPRED_SKAZANO.add(k)
+            print(f"[СПРЕД] ⚠️  в истории {sp:.0f} пунктов — сломанный "
+                  f"(переход дня); беру 3 по умолчанию")
+        sp = 3.0
+    return sp * point
+
+
+# SPRED_ZDRAVYY_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 (30.10): здесь была старая доливка — выброшена ══
+# Слово Шефа: «старые доливки выбросить, почистить совсем». Метка ниже
+# оставлена, чтобы старый патч не вписал её обратно.
+# DOLIVKI_GORODA_V1 - marker
+
+
+# ── GOROD_VEDYOT_A08_V1: позицию после входа ведёт город ──────
+# Слово Шефа 06.10: как в замере доливок — стоп стоит, выход по трём
+# условиям против на D1 или по стопу, доливки на часах. Чьи позиции:
+# MESTO_DZHEMA_V1: номера семьи места — от мест с пометкой «уровень: продвинутый новичок»
+# в паспорте цеха (Биржа/mesto_urovnya.py). Для старого A08 числа те же.
+try:
+    import mesto_urovnya as _md
+    GOROD_VEDYOT_MAGIC = _md.TENI     # тени (книги города) всех мест уровня
+    STOP_STOIT_MAGIC = _md.NOMERA     # позиции мест уровня — стоп стоит, двигает он сам
+    _nomer_teni = _md.nomer_teni
+except Exception as _e_md:
+    print(f"[МЕСТО УРОВНЯ] номера по-старому ({_e_md})")
+    GOROD_VEDYOT_MAGIC = {1100003}
+    STOP_STOIT_MAGIC = {100003}
+
+    def _nomer_teni(_m):
+        return 1100003
+JEM_MAGIC = 100003                 # старое имя — оставлено для тех, кто его читает
+GOROD_KNIGA_MAGIC = 1100003        # старое имя — оставлено для тех, кто его читает
+
+
+# GOROD_VEDYOT_A08_V1 - marker
+
+
+# VNUTRI_DNEVKI_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 (30.10): здесь была старая доливка — выброшена ══
+# Слово Шефа: «старые доливки выбросить, почистить совсем». Метка ниже
+# оставлена, чтобы старый патч не вписал её обратно.
+# DOLIVKI_POSLE_4_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 (30.10): здесь была старая доливка — выброшена ══
+# Слово Шефа: «старые доливки выбросить, почистить совсем». Метка ниже
+# оставлена, чтобы старый патч не вписал её обратно.
+# LYUBOY_ETAZH_V1 - marker
+
+# DVE_DOLIVKI_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 (30.10): здесь была старая доливка — выброшена ══
+# Слово Шефа: «старые доливки выбросить, почистить совсем». Метка ниже
+# оставлена, чтобы старый патч не вписал её обратно.
+# DOLIVKA_DZHEMA_V1 - marker
+
+
+# ══ CHISTKA_DOLIVOK_V1 (30.10): здесь была старая доливка — выброшена ══
+# Слово Шефа: «старые доливки выбросить, почистить совсем». Метка ниже
+# оставлена, чтобы старый патч не вписал её обратно.
+# ODNA_DOLIVKA_V1 - marker
+
+# DVE_KNIGI_V2 - marker
+
+# GOROD_SMOTRIT_V1 - marker
+
+# PASPORT_KONTORY_V1 - marker
+
+
+# ══ ISHOD_V_TETRAD_V1 — исход сделки в тетрадь места любого цеха ══
+# Старый цех торговый_хаос (и общий стол) — прежняя рука, без изменений.
+# Новый цех — тетрадь его места: цех — тот, чей стол сейчас работает;
+# место — по имени на позиции (исполнитель конторы называет позицию
+# именем места). Тетради старого цеха новый цех не трогает никогда.
+_dopisat_v_dnevnik_staryy = _dopisat_v_dnevnik
+
+
+def _tetrad_mesta(ceh: str, trader: str):
+    """Путь к тетради места в цехе ceh или None."""
+    imya = str(trader or "").strip().upper()
+    if not imya:
+        return None
+    sloty = _REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / ceh / "слоты"
+    try:
+        mesto = next((d for d in sorted(sloty.iterdir())
+                      if d.is_dir() and d.name.upper() == imya), None)
+    except Exception:
+        return None
+    if mesto is None:
+        return None
+    dannye = mesto / "данные"
+    p = dannye / f"diary_{mesto.name}.jsonl"
+    if p.exists():
+        return p
+    # место склонировано с другого и тетрадь зовётся по-старому —
+    # берём её, только если она там одна (иначе не угадываем)
+    try:
+        est = sorted(dannye.glob("diary_*.jsonl"))
+    except Exception:
+        est = []
+    return est[0] if len(est) == 1 else None
+
+
+def _vpisat_ishod(path, trader, entry, pnl_r, reason, bar_time=None) -> bool:
+    """Та же рука, что у старых: самая свежая незакрытая запись с этим
+    входом получает исход. Не нашлась — молчим, врать в тетрадь нельзя."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return False
+    itog = {
+        "pnl_r":  round(float(pnl_r), 4),
+        "reason": reason,
+        "closed_at": bar_time,
+        "оценка": ("плюс" if pnl_r > 0 else
+                   "полный стоп" if abs(pnl_r + 1.0) < 0.05 else "минус"),
+    }
+    for i in range(len(lines) - 1, -1, -1):
+        ln = lines[i].strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except Exception:
+            continue
+        if rec.get("result") is not None:
+            continue
+        e = rec.get("entry")
+        if e is None:
+            continue
+        try:
+            if abs(float(e) - float(entry)) > 1e-6:
+                continue
+        except Exception:
+            continue
+        rec["result"] = itog
+        lines[i] = json.dumps(rec, ensure_ascii=False)
+        try:
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception as ex:
+            print(f"[ТЕТРАДЬ] ⚠️  не записал ({trader}): {ex}")
+            return False
+        znak = "🟢" if pnl_r > 0 else "🔴"
+        print(f"[ТЕТРАДЬ] ✍️  {trader}: вход {entry} → "
+              f"{pnl_r:+.2f}R ({reason}) {znak} — исход вписан")
+        return True
+    return False
+
+
+def _dopisat_v_dnevnik(trader: str, entry, pnl_r, reason: str,
+                       bar_time=None):   # noqa: F811  ISHOD_V_TETRAD_V1
+    ceh = (ceh_seychas() or "").strip()   # SVOY_CEH_U_RABOTY_V1
+    if not ceh or ceh == "торговый_хаос":
+        return _dopisat_v_dnevnik_staryy(trader, entry, pnl_r, reason,
+                                         bar_time)
+    if entry is None or pnl_r is None:
+        return False
+    path = _tetrad_mesta(ceh, trader)
+    if path is None:
+        return False          # у позиции нет своей тетради в этом цехе
+    return _vpisat_ishod(path, trader, entry, pnl_r, reason, bar_time)
+
+
+# ISHOD_V_TETRAD_V1 - marker
+
+
+# ══ SVOY_CEH_U_RABOTY_V1 — у каждой работы свой цех ══════════════
+# Чей стол читать и писать, решается так (первое, что есть):
+#   1. цех, закреплённый за этой работой (прогон, РЫНОК, вахта и всё,
+#      что они делают в фоновых нитках) — _CEH_RABOTY;
+#   2. цех вкладки кабинета, из которой нажали кнопку — его подсказывает
+#      кабинет (_KTO_SPRASHIVAET);
+#   3. общая ячейка _TEKUSHCHIY_CEH — как было до этого патча.
+import contextvars as _cv_svoy
+
+_CEH_RABOTY = _cv_svoy.ContextVar("ceh_raboty", default=None)
+_KTO_SPRASHIVAET = None
+
+
+def ceh_seychas() -> str:
+    v = _CEH_RABOTY.get()
+    if v is not None:
+        return v
+    f = _KTO_SPRASHIVAET
+    if f is not None:
+        try:
+            c = f()
+            if c:
+                return str(c)
+        except Exception:
+            pass
+    return _TEKUSHCHIY_CEH
+
+
+def zakrepit_ceh(ceh_id: str = "") -> None:
+    """Закрепить цех за ЭТОЙ работой. Общую ячейку не трогает."""
+    c = (ceh_id or "").strip()
+    if c:
+        _CEH_RABOTY.set(c)
+
+
+_postavit_ceh_obshchiy = postavit_ceh
+
+
+def postavit_ceh(ceh_id: str = ""):   # noqa: F811  SVOY_CEH_U_RABOTY_V1
+    """Как было (общая ячейка) + закрепить за той работой, что зовёт."""
+    _postavit_ceh_obshchiy(ceh_id)
+    _CEH_RABOTY.set((ceh_id or "").strip())
+
+
+def _dom_ceha() -> Path:   # noqa: F811  SVOY_CEH_U_RABOTY_V1
+    c = ceh_seychas()
+    if not c:
+        return _OBSHCHIY_DIR
+    return _REPO / "GRONDHEIM_CITY" / "Биржа" / "цеха" / c / "данные"
+
+
+def _put_stola() -> Path:   # noqa: F811  SVOY_CEH_U_RABOTY_V1
+    """Стол этого цеха. Общий переезжает только в старый цех (PUSTOY_STOL_V1)."""
+    c = ceh_seychas()
+    d = _dom_ceha()
+    p = d / "trading_state.json"
+    if not c:
+        return p
+    if not p.exists() and STATE_PATH.exists() and c == "торговый_хаос":
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            p.write_text(STATE_PATH.read_text(encoding="utf-8"),
+                         encoding="utf-8")
+            print(f"[СТОЛ] переехал в цех {c} (общий остался как был)")
+        except Exception as e:
+            print(f"[СТОЛ] не смог перенести общий стол: {e}")
+    return p
+
+
+def _put_pnl() -> Path:   # noqa: F811  SVOY_CEH_U_RABOTY_V1
+    return (_dom_ceha() / "trading_pnl.jsonl") if ceh_seychas() else PNL_PATH
+
+
+# SVOY_CEH_U_RABOTY_V1 - marker
+
+
+# ══ MESTO_BEZ_IMENI_V1 — поле места: новое имя, старые записи читаются ══
+def _pole_mesta(d, imya):
+    try:
+        import mesto_urovnya as _mu_p
+        return _mu_p.pole(d, imya)
+    except Exception:
+        return (d or {}).get(imya)
+
+
+# MESTO_BEZ_IMENI_V1 - marker
+
+
+# ══ POLKA_SHAG2_V1 — ведение как на A06: стоп ведёт код за Зубами ══
+# Слово Шефа 23.10: «пусть останется то ведение, что на 06». У мест уровня стоп
+# стоял («двигает сам»). Место с паспортной записью «стоп»: «код» — стоп тянет
+# код за Зубами Аллигатора, когда линии в ряд (в болтанке стоит), только в защиту.
+_STOP_KOD_KESH = {"t": 0.0, "n": set()}
+
+
+def _stop_kod_nomera() -> set:
+    import time as _tm
+    if _tm.time() - _STOP_KOD_KESH["t"] < 10:
+        return _STOP_KOD_KESH["n"]
+    out = set()
+    try:
+        import mesto_urovnya as _mu
+        ceha = Path(__file__).resolve().parent.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха"
+        for d in ceha.iterdir():
+            try:
+                man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for z in man.get("слоты") or []:
+                if str(z.get("стоп") or "").strip().lower() == "код":
+                    m = _mu.nomer_mesta(str(z.get("слот")), d.name)
+                    if m is not None:
+                        out.add(m)
+    except Exception as e:
+        print(f"[ТРЕЙЛ] места со стопом кода не прочлись ({e})")
+    _STOP_KOD_KESH.update(t=_tm.time(), n=out)
+    return out
+
+
+class _StopStoitKromeKoda:
+    def __init__(self, base):
+        self._b = base
+
+    def __contains__(self, m):
+        try:
+            if m in _stop_kod_nomera():
+                return False
+        except Exception:
+            pass
+        return m in self._b
+
+    def __iter__(self):
+        return iter([m for m in self._b if m not in _stop_kod_nomera()])
+
+
+STOP_STOIT_MAGIC = _StopStoitKromeKoda(STOP_STOIT_MAGIC)
+
+
+# POLKA_SHAG2_V1 - marker
+
+
+# RESHIL_ZAKRYL_V1 - marker
+
+
+# CHISTKA_DOLIVOK_V1 - marker
+
+
+# ══ DOLIVKA_FRAKTAL_V1 (31.10): здесь была доливка «по окну в продолжении» ══
+# Слово Шефа 31.10: доливка — по первому фракталу на два этажа ниже, во все
+# входы, ставит город (hooks, DOLIVKA_FRAKTAL_V1). Метка оставлена, чтобы
+# старый патч не вписал окно обратно.
+# DOLIVKA_D03_V1 - marker
+
+
+# ══ UBORKA_0911_V1 (09.11): здесь были быстрые доливки (фрактал H1, вершина H4,
+# вторая доливка жителя) — удалены словом Шефа. Доливки — по канону главы 9, заново.
+# DOLIVKA_FRAKTAL_V1 - marker
+
+
+# DOLIVKI_TRI_V1 - marker

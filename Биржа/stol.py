@@ -71,6 +71,8 @@ _BIRZHA = Path(__file__).resolve().parent
 # Живой спред из терминала главнее — это только на бесспредовую
 # историю. Менять цифру можно прямо здесь.
 SPRED_PO_UMOLCHANIYU = 3
+# SPRED_ZDRAVYY_V1: больше этого (в пунктах) — спред в истории сломан
+SPRED_MAKS_PUNKTOV = 50
 if str(_BIRZHA) not in sys.path:
     sys.path.insert(0, str(_BIRZHA))
 
@@ -378,6 +380,13 @@ def nakryt(symbol: str, timeframe: str,
             "есть": bool((md.get("necron_bar") or {}).get("direction")),
             "сторона": (md.get("necron_bar") or {}).get("direction"),
             "цена": (md.get("necron_bar") or {}).get("price"),
+            # RB_POSLEDNIY_NA_STOLE_V1: где был последний — тем же правилом
+            "последний": _poslednij_razvorotnik(md, bars, symbol, timeframe),
+            # DVE_SVECHI_STOL_V1: разворот двумя свечами — тем же правилом,
+            # что будильник (council.dve_svechi_fakt). Раньше будили словами
+            # «считай их одним разворотником», а стол говорил «на этом баре
+            # нет» — и трейдер верил столу.
+            "две_свечи": _dve_svechi_na_stole(md, bars, symbol, timeframe),
         },
         # ЗОНА по Вильямсу (iZone из эксперта Шефа): AO и AC вместе.
         # Зелёная — оба растут, красная — оба падают, серая — спорят.
@@ -410,6 +419,100 @@ def nakryt(symbol: str, timeframe: str,
 # TRI_BARA_V2 (слово Шефа 25.09): разворотник и три бара до —
 # всего четыре бара в окне.
 _PRISED_OKNO = 4
+
+
+# ══════════════════════════════════════════════════════════════
+# RB_POSLEDNIY_NA_STOLE_V1 — где был последний разворотник
+# ══════════════════════════════════════════════════════════════
+# Кадр ставит стрелку над КАЖДЫМ разворотником в окне и обводит
+# последний кружком, а стол говорил только про последний бар: нет на
+# нём — «нет». Трейдер видел кружок, читал «нет» и замирал, хотя вход
+# по разворотнику бар-два назад по канону разрешён (окно приседающего).
+# Теперь стол говорит, где был последний, — тем же правилом ядра, в
+# том же окне, что кадр.
+_RB_OKNO = 140   # то же окно, что кадр (grafik.BAROV_V_KADRE)
+
+
+def _poslednij_razvorotnik(md: dict, bars, symbol: str, timeframe: str):
+    """Последний разворотник в окне кадра. Не посчитался — None."""
+    try:
+        from williams_core import compute_alligator, vse_necron
+        b = bars
+        if not b:
+            from feed_source import bars as _sb
+            b, _pt = _sb(symbol, timeframe, count=400)
+            try:
+                from hooks import _tolko_zakrytye
+                b = _tolko_zakrytye(b)
+            except Exception:
+                pass
+        if not b or len(b) < 42:
+            return None
+        # чужие бары не подсовываем: стол считан по одному бару — и мы
+        # смотрим ровно до него
+        if str(b[-1].get("date")) != str((md or {}).get("bar_time")):
+            return None
+        al = compute_alligator([x["high"] for x in b], [x["low"] for x in b],
+                               point=(md or {}).get("point"))
+        vse = vse_necron(b, al.get("jaw_series"), al.get("teeth_series"),
+                         al.get("lips_series"),
+                         s=max(1, len(b) - _RB_OKNO + 1))
+        if not vse:
+            return {"нет_в_окне": True}
+        r = vse[-1]
+        bar = b[r["i"]]
+        return {"сторона": r["сторона"], "цена": r["цена"], "дата": r["дата"],
+                "баров_назад": len(b) - 1 - r["i"],
+                "high": bar["high"], "low": bar["low"]}
+    except Exception:
+        return None
+
+
+def _razvorotnik_strokoy(rb: dict) -> str:
+    if rb.get("есть"):
+        return (f"РАЗВОРОТНЫЙ БАР: {rb.get('сторона')} @ {rb.get('цена')}"
+                f" — на этом баре")
+    _dv = rb.get("две_свечи") or {}          # DVE_SVECHI_STOL_V1
+    if _dv.get("сторона"):
+        return (f"РАЗВОРОТНЫЙ БАР: двумя свечами {str(_dv.get('с'))[5:]} + "
+                f"{str(_dv.get('по'))[5:]} — {_dv['сторона']} @ {_dv.get('цена')}"
+                f" — на этом баре. Это ОДИН разворотник: те же правила, что у "
+                f"одной свечи, машина просто разрезала его на две")
+    posl = rb.get("последний") or {}
+    if posl.get("сторона"):
+        d = str(posl.get("дата") or "")
+        d = d[5:] if len(d) >= 16 else d
+        return (f"РАЗВОРОТНЫЙ БАР: на этом баре нет — последний "
+                f"{posl['сторона']} @ {posl.get('цена')}, "
+                f"{posl.get('баров_назад')} бар(ов) назад ({d}); "
+                f"на кадре он обведён кружком")
+    if posl.get("нет_в_окне"):
+        return f"РАЗВОРОТНЫЙ БАР: нет — в окне кадра ({_RB_OKNO} баров) ни одного"
+    return "РАЗВОРОТНЫЙ БАР: нет"
+
+
+def _vhod_strokoy(rb: dict, c: dict, p: dict) -> str:
+    """ВХОД: по разворотнику на этом баре — как было. Нет на этом, но
+    был 1–3 бара назад (окно приседающего, TRI_BARA_V2) — уровни по
+    НЕМУ: заявка ставится на тот бар."""
+    if rb.get("есть"):
+        return _urovni_zayavki(rb, c, p)
+    _dv = rb.get("две_свечи") or {}          # DVE_SVECHI_STOL_V1
+    if _dv.get("сторона"):
+        _s = _urovni_zayavki({"сторона": _dv["сторона"]},
+                             {"high": _dv.get("high"), "low": _dv.get("low")}, p)
+        return _s.replace("ВХОД:", "ВХОД по развороту двумя свечами (края "
+                                   "обеих свечей):", 1)
+    posl = rb.get("последний") or {}
+    n = posl.get("баров_назад")
+    if posl.get("сторона") and isinstance(n, int) and 1 <= n <= _PRISED_OKNO - 1:
+        d = str(posl.get("дата") or "")
+        d = d[5:] if len(d) >= 16 else d
+        s = _urovni_zayavki({"сторона": posl.get("сторона")},
+                            {"high": posl.get("high"), "low": posl.get("low")}, p)
+        return s.replace("ВХОД:", f"ВХОД по разворотнику {n} бар(а) назад "
+                                  f"({d}):", 1)
+    return "ВХОД: разворотного бара сейчас нет"
 
 
 def _prisedanie(md: dict, bars, timeframe: str = "") -> str:
@@ -517,10 +620,7 @@ def slovami(stol: dict) -> str:
         ))(nt),
         # PRIBORY_NA_STOL_V1: то, ради чего трейдера зовут, — первой
         # строкой, а не в конце и не молчком.
-        f"РАЗВОРОТНЫЙ БАР: "
-        f"{(p.get('разворотный_бар') or {}).get('сторона') or 'нет'}"
-        + (f" @ {(p.get('разворотный_бар') or {}).get('цена')}"
-           if (p.get('разворотный_бар') or {}).get('есть') else ""),
+        _razvorotnik_strokoy(p.get('разворотный_бар') or {}),   # RB_POSLEDNIY_NA_STOLE_V1
         # TOCHKA_ROZHDAETSYA_V1: от начала трейдер и меряет волну 1
         (lambda _t: (
             f"ТОЧКА НОЛЬ: {_t.get('сторона') or '—'} @ {_t.get('цена')}"
@@ -589,8 +689,7 @@ def slovami(stol: dict) -> str:
         # Раньше стояла одна цена и слова «стоп за ним же» — считать
         # приходилось в уме, а в уме легко решить «подожду пробоя».
         (lambda _rb, _t: (
-            (_urovni_zayavki(_rb, c, p)
-             if _rb.get("есть") else "ВХОД: разворотного бара сейчас нет")
+            _vhod_strokoy(_rb, c, p)   # RB_POSLEDNIY_NA_STOLE_V1
             + ((f"   ·   ПОПЫТКА {int(_t.get('попыток') or 0) + 1}-я "
                 f"на этой структуре"
                 + ("  — то ли ты делаешь?"
@@ -747,6 +846,13 @@ def _spred_ceny(symbol: str, timeframe: str, point) -> tuple:
             sp = float(sp) if sp not in (None, "") else 0.0
         except (TypeError, ValueError):
             sp = 0.0
+        # SPRED_ZDRAVYY_V1: огромный спред в истории — сломанный
+        # (бар открывается на переходе дня). Не прибавляем его к
+        # краям разворотника: заявка уезжала за бар, стоп ещё дальше.
+        if sp > SPRED_MAKS_PUNKTOV:
+            return (SPRED_PO_UMOLCHANIYU * float(shag),
+                    f"{SPRED_PO_UMOLCHANIYU} пункт(а) по умолчанию — в истории "
+                    f"записан сломанный спред {sp:.0f} пунктов")
         if sp <= 0:
             # SPRED_PO_UMOLCHANIYU_V1: в истории спреда нет —
             # раньше отсюда уходил None, и выше подставлялся
@@ -895,3 +1001,325 @@ if __name__ == "__main__":
 # ZAPUSK_V_KONEC_V1 - marker
 
 # AC_VON_V1 - marker
+
+# ODNO_PRAVILO_RB_V1 - marker
+
+# SPRED_ZDRAVYY_V1 - marker
+
+# KOMPAS_OKNO_V1 - marker
+
+
+# ══════════════════════════════════════════════════════════════
+# DVE_SVECHI_STOL_V1 — разворот двумя свечами на столе
+# ══════════════════════════════════════════════════════════════
+# Слово Шефа (25.09, 15.10): «все те же правила некрон-бара, только
+# машина поделила не в одну свечу, а в две». Будильник это знал и будил
+# словами «считай их одним разворотником», а стол знал только одну
+# свечу — и говорил «на этом баре нет, последний 14 баров назад».
+# Две бумаги спорили, трейдер верил столу и не входил.
+# Правило одно — council.dve_svechi_fakt; здесь только дверь к нему.
+def _dve_svechi_na_stole(md: dict, bars, symbol: str, timeframe: str):
+    try:
+        if (md.get("necron_bar") or {}).get("direction"):
+            return {}                     # одиночный уже есть — им и работаем
+        from williams_core import compute_alligator
+        b = bars
+        if not b:
+            from feed_source import bars as _sb
+            b, _pt = _sb(symbol, timeframe, count=400)
+            try:
+                from hooks import _tolko_zakrytye
+                b = _tolko_zakrytye(b)
+            except Exception:
+                pass
+        if not b or len(b) < 42:
+            return {}
+        # чужие бары не подсовываем: стол считан по одному бару
+        if str(b[-1].get("date")) != str((md or {}).get("bar_time")):
+            return {}
+        al = compute_alligator([x["high"] for x in b], [x["low"] for x in b],
+                               point=(md or {}).get("point"))
+        import council as _cn
+        return _cn.dve_svechi_fakt(b, al) or {}
+    except Exception as _e:
+        print(f"[СТОЛ] разворот двумя свечами не посчитался ({_e})")
+        return {}
+
+# DVE_SVECHI_STOL_V1 - marker
+
+
+# ══ ODNA_SVECHA_V1 — на месте «две_свечи: нет» стол двух свечей не показывает ══
+# Канон («Торговый хаос», 2-е изд., гл. 9): бар разворота — одна свеча целиком
+# за пастью. Слово Шефа 09.11. Остальным местам — как было.
+
+def _odna_mesta() -> list:
+    """ODNA_SVECHA_V1: места с пометкой «две_свечи»: «нет» во всех цехах.
+    → [(цех, слот, ключ)]. Не прочлось — пусто: всё как было."""
+    import json as _j_o
+    from pathlib import Path as _P_o
+    out = []
+    korn = _P_o(__file__).resolve().parent.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха"
+    try:
+        for man_p in korn.glob("*/manifest.json"):
+            try:
+                man = _j_o.loads(man_p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for z in man.get("слоты") or []:
+                if str(z.get("две_свечи") or "").strip().lower() == "нет":
+                    sl = str(z.get("слот") or "").strip()
+                    out.append((man_p.parent.name, sl,
+                                str(z.get("ключ") or sl).strip().lower()))
+    except Exception:
+        pass
+    return out
+
+
+_nakryt_do_odnoy = nakryt
+
+
+def nakryt(symbol: str, timeframe: str,   # noqa: F811
+           md=None, bars=None, point=None, self_key: str = "brut") -> dict:
+    stol = _nakryt_do_odnoy(symbol, timeframe, md=md, bars=bars, point=point,
+                            self_key=self_key)
+    try:
+        sk = str(self_key or "").strip().lower()
+        kl = set()
+        for _c, s, k in _odna_mesta():
+            kl.add(s.lower())
+            kl.add(k)
+        if sk and sk in kl:
+            rb = ((stol or {}).get("приборы") or {}).get("разворотный_бар")
+            if isinstance(rb, dict) and rb.get("две_свечи"):
+                rb["две_свечи"] = {}
+    except Exception as _e_o:
+        print(f"[СТОЛ] пометка одной свечи не сработала ({_e_o})")
+    return stol
+
+# ODNA_SVECHA_V1 - marker
+
+
+# ══ ZA_DIAPAZONOM_V1 — на столе места «за_диапазоном: да» строка ДИАПАЗОН ══
+# Для стороны свежего бара разворота (на этом баре или до трёх раньше). Факт,
+# не приказ: запрет ставит рука места. Правило — Биржа/diapazon.py.
+_nakryt_do_diapazona = nakryt
+
+
+def nakryt(symbol: str, timeframe: str,   # noqa: F811
+           md=None, bars=None, point=None, self_key: str = "brut") -> dict:
+    stol = _nakryt_do_diapazona(symbol, timeframe, md=md, bars=bars, point=point,
+                                self_key=self_key)
+    try:
+        import diapazon as _dp
+        sk = str(self_key or "").strip().lower()
+        kl = set()
+        for _c, s, k in _dp.mesta():
+            kl.add(s.lower())
+            kl.add(k)
+        if not sk or sk not in kl:
+            return stol
+        p = (stol or {}).get("приборы") or {}
+        rb = p.get("разворотный_бар") or {}
+        st = rb.get("сторона") if rb.get("есть") else None
+        if not st:
+            posl = rb.get("последний") or {}
+            n = posl.get("баров_назад")
+            if posl.get("сторона") and isinstance(n, int) and 1 <= n <= 3:
+                st = posl.get("сторона")
+        if st in ("BULL", "BEAR"):
+            napr = "LONG" if st == "BULL" else "SHORT"
+            d = _dp.proverit(symbol, timeframe, napr)
+            p["диапазон"] = f"для {napr}: {d.get('слова')}"
+    except Exception as _e_d:
+        print(f"[СТОЛ] диапазон не посчитался ({_e_d})")
+    return stol
+
+
+_slovami_do_diapazona = slovami
+
+
+def slovami(stol: dict) -> str:   # noqa: F811
+    s = _slovami_do_diapazona(stol)
+    try:
+        d = ((stol or {}).get("приборы") or {}).get("диапазон")
+        if d:
+            s += f"\n— ДИАПАЗОН {d}"
+    except Exception:
+        pass
+    return s
+
+# ZA_DIAPAZONOM_V1 - marker
+
+
+# ══ HOD_SVOYSTVAMI_V1 — на месте «масштаб_на_столе: да» строка МАСШТАБ ХОДА ══
+# Город меряет масштаб, житель читает свойства (слово Шефа 10.11). Только
+# этаж и бары — ни счёта волн, ни итога. Сторона — свежего бара разворота.
+def _masshtab_mesta() -> set:
+    import json as _j_m
+    from pathlib import Path as _P_m
+    kl = set()
+    korn = _P_m(__file__).resolve().parent.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха"
+    try:
+        for mp in korn.glob("*/manifest.json"):
+            try:
+                man = _j_m.loads(mp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for z in man.get("слоты") or []:
+                if str(z.get("масштаб_на_столе") or "").strip().lower() in ("да", "true", "1"):
+                    sl = str(z.get("слот") or "").strip()
+                    kl.add(sl.lower())
+                    kl.add(str(z.get("ключ") or sl).strip().lower())
+    except Exception:
+        pass
+    return kl
+
+
+def masshtab_hoda_slovami(symbol: str, timeframe: str, vverh: bool) -> str:
+    import volny_ao as _va_m
+    ot = _va_m.schet_hoda(symbol, timeframe, vverh)
+    hod = "вверх" if vverh else "вниз"
+    if not ot or not ot.get("ok"):
+        return f"ход {hod}: не посчитать ({(ot or {}).get('slovami', '')})"
+    if ot.get("нет_хода"):
+        return f"ход {hod} к краю по подтверждённым фракталам не определить"
+    t = f"ход {hod} от {ot.get('начало_хода')} ({str(ot.get('дата_начала_хода'))[:10]}) к краю"
+    if ot.get("ne_lozhitsya"):
+        pr = ", ".join(f"{e} — {n}" for e, n in (ot.get("probovali") or []))
+        return (t + f": баров {pr}. В 100–140 не ложится ни на одном этаже — AO по нулю здесь "
+                "не судит; смотри старше, если отрезки режутся.")
+    ms = ot.get("масштаб_с")
+    if ms:
+        t += (f": на {ms['этаж']} {ms['баров']} баров — коротко для AO; читай на "
+              f"{ms['этаж_счёта']}, там {ms['баров_там']} баров")
+    else:
+        t += f": {ot.get('баров_хода')} баров на {ot.get('этаж') or timeframe} — читай здесь"
+    pm = ot.get("примерно")
+    if pm:
+        t += f" (масштаб {pm['как']}, норма 100–140 — читай осторожно)"
+    return t + ". Свойства на этом этаже — твоё дело."
+
+
+_nakryt_do_masshtaba = nakryt
+
+
+def nakryt(symbol: str, timeframe: str,   # noqa: F811
+           md=None, bars=None, point=None, self_key: str = "brut") -> dict:
+    stol = _nakryt_do_masshtaba(symbol, timeframe, md=md, bars=bars, point=point,
+                                self_key=self_key)
+    try:
+        sk = str(self_key or "").strip().lower()
+        if not sk or sk not in _masshtab_mesta():
+            return stol
+        p = (stol or {}).get("приборы") or {}
+        rb = p.get("разворотный_бар") or {}
+        st = rb.get("сторона") if rb.get("есть") else None
+        if not st:
+            posl = rb.get("последний") or {}
+            n = posl.get("баров_назад")
+            if posl.get("сторона") and isinstance(n, int) and 1 <= n <= 3:
+                st = posl.get("сторона")
+        if st in ("BULL", "BEAR"):
+            p["масштаб_хода"] = masshtab_hoda_slovami(symbol, timeframe, st == "BEAR")
+    except Exception as _e_m:
+        print(f"[СТОЛ] масштаб хода не посчитался ({_e_m})")
+    return stol
+
+
+_slovami_do_masshtaba = slovami
+
+
+def slovami(stol: dict) -> str:   # noqa: F811
+    s = _slovami_do_masshtaba(stol)
+    try:
+        d = ((stol or {}).get("приборы") or {}).get("масштаб_хода")
+        if d:
+            s += f"\n— МАСШТАБ ХОДА: {d}"
+    except Exception:
+        pass
+    return s
+
+# HOD_SVOYSTVAMI_V1 - marker
+
+
+# ══ KONCHIK_5V5_V1 — на месте «кончик_на_столе: да» строка МЛАДШИЙ ══
+# Только когда на этаже хода город видит дивер 3 на 5: есть ли внутри пятой
+# своя пятая с дивером («5 в 5»). Факт, не приказ. Слово Шефа 10.11.
+def _konchik_mesta() -> set:
+    import json as _j_k
+    from pathlib import Path as _P_k
+    kl = set()
+    korn = _P_k(__file__).resolve().parent.parent / "GRONDHEIM_CITY" / "Биржа" / "цеха"
+    try:
+        for mp in korn.glob("*/manifest.json"):
+            try:
+                man = _j_k.loads(mp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for z in man.get("слоты") or []:
+                if str(z.get("кончик_на_столе") or "").strip().lower() in ("да", "true", "1"):
+                    sl = str(z.get("слот") or "").strip()
+                    kl.add(sl.lower())
+                    kl.add(str(z.get("ключ") or sl).strip().lower())
+    except Exception:
+        pass
+    return kl
+
+
+def konchik_slovami(symbol: str, timeframe: str, vverh: bool) -> str:
+    import volny_ao as _va_k
+    cur = _va_k.schet_hoda(symbol, timeframe, vverh)
+    if not str((cur or {}).get("volna") or "").startswith("пятая, край"):
+        return ""
+    ml = _va_k.mladshiy(symbol, timeframe, vverh, cur) or {}
+    if ml.get("кончик") is True:
+        return (f"на этаже хода дивер 3 на 5; младший ({ml.get('этаж')}): внутри пятой своя "
+                f"пятая с дивером — КОНЧИК («5 в 5»)")
+    if ml.get("кончик") is False:
+        return (f"на этаже хода дивер 3 на 5; младший ({ml.get('этаж')}): кончика ещё нет — "
+                f"пятая тянется")
+    return "на этаже хода дивер 3 на 5; младший: " + (ml.get("текст") or "не сложился — прочерк")
+
+
+_nakryt_do_konchika = nakryt
+
+
+def nakryt(symbol: str, timeframe: str,   # noqa: F811
+           md=None, bars=None, point=None, self_key: str = "brut") -> dict:
+    stol = _nakryt_do_konchika(symbol, timeframe, md=md, bars=bars, point=point,
+                               self_key=self_key)
+    try:
+        sk = str(self_key or "").strip().lower()
+        if not sk or sk not in _konchik_mesta():
+            return stol
+        p = (stol or {}).get("приборы") or {}
+        rb = p.get("разворотный_бар") or {}
+        st = rb.get("сторона") if rb.get("есть") else None
+        if not st:
+            posl = rb.get("последний") or {}
+            n = posl.get("баров_назад")
+            if posl.get("сторона") and isinstance(n, int) and 1 <= n <= 3:
+                st = posl.get("сторона")
+        if st in ("BULL", "BEAR"):
+            t = konchik_slovami(symbol, timeframe, st == "BEAR")
+            if t:
+                p["младший"] = t
+    except Exception as _e_k:
+        print(f"[СТОЛ] кончик не посчитался ({_e_k})")
+    return stol
+
+
+_slovami_do_konchika = slovami
+
+
+def slovami(stol: dict) -> str:   # noqa: F811
+    s = _slovami_do_konchika(stol)
+    try:
+        d = ((stol or {}).get("приборы") or {}).get("младший")
+        if d:
+            s += f"\n— МЛАДШИЙ: {d}"
+    except Exception:
+        pass
+    return s
+
+# KONCHIK_5V5_V1 - marker

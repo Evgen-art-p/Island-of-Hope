@@ -231,34 +231,20 @@ def narisovat(bars: list, alligator: dict, ao_series: list,
     # в противоположной половине и весь бар ЦЕЛИКОМ вне пасти. Считаем
     # прямо по рядам линий — одним проходом по окну кадра.
     try:
-        from williams_core import _shifted_series
-        _jaw = _shifted_series(alligator.get("jaw_series"), 8)
-        _teeth = _shifted_series(alligator.get("teeth_series"), 5)
-        _lips = _shifted_series(alligator.get("lips_series"), 3)
+        # ODNO_PRAVILO_RB_V1: правило не копируем — спрашиваем ядро.
+        # Та же формула, что у стола: одна правда на кадр и на стол.
+        from williams_core import vse_necron
         _razmah_rb = max(x["high"] for x in b) - min(x["low"] for x in b)
         _sdvig_rb = len(bars) - n
         _posledniy = None
-        for _k in range(1, n):
-            _i = _sdvig_rb + _k
-            if _i < 1 or _i >= len(_jaw):
-                continue
-            _j, _t, _l = _jaw[_i], _teeth[_i], _lips[_i]
-            if _j is None or _t is None or _l is None:
-                continue
-            _up, _dn = max(_l, _t, _j), min(_l, _t, _j)
-            _bar, _pred = bars[_i], bars[_i - 1]
-            _mid = (_bar["high"] + _bar["low"]) / 2
-            _storona = None
-            if (_bar["high"] > _pred["high"] and _bar["close"] < _mid
-                    and _bar["low"] > _up):
-                _storona = "BEAR"
-            elif (_bar["low"] < _pred["low"] and _bar["close"] > _mid
-                    and _bar["high"] < _dn):
-                _storona = "BULL"
-            if not _storona:
-                continue
+        for _r in vse_necron(bars, alligator.get("jaw_series"),
+                             alligator.get("teeth_series"),
+                             alligator.get("lips_series"),
+                             s=_sdvig_rb + 1):
+            _k = _r["i"] - _sdvig_rb
+            _storona = _r["сторона"]
             _bych = _storona == "BULL"
-            _cena = _bar["low"] if _bych else _bar["high"]
+            _cena = _r["цена"]
             _dy = -1 if _bych else 1
             ax.plot(_k, _cena + _dy * _razmah_rb * 0.02,
                     marker="^" if _bych else "v",
@@ -444,8 +430,8 @@ def narisovat(bars: list, alligator: dict, ao_series: list,
             _pt = str(_p.get('timeframe') or '').strip().upper()
             if _ps and _sym and _ps != _sym:
                 continue
-            if _pt and _tf and _pt != _tf:
-                continue
+            # UROVNI_VEZDE_V1: этаж кадра не важен — уровни рынка на всех этажах
+            # (слово Шефа 22.10). Было: другой этаж — пропустить.
             _st = str(_p.get('status') or '').upper()
             _vh = _p.get('entry')
             _sp = _p.get('stop')
@@ -463,8 +449,20 @@ def narisovat(bars: list, alligator: dict, ao_series: list,
             if (_s0 is not None and _sp is not None
                     and abs(float(_s0) - float(_sp)) > 1e-9):
                 _linii.append((float(_s0), '#ffd866', '--', 'был стоп'))
+        _skryto = []   # UROVNI_VEZDE_V2: далёкие уровни чужого этажа — подписью у края
         if _linii:
             _lo, _hi = ax.get_ylim()
+            _svoi_ceny = set()
+            for _p in _poz:
+                if (str(_p.get('symbol') or '').strip().upper() == _sym
+                        and str(_p.get('timeframe') or '').strip().upper() in ('', _tf)):
+                    for _kk in ('entry', 'stop', 'stop_initial'):
+                        if _p.get(_kk) is not None:
+                            _svoi_ceny.add(round(float(_p.get(_kk)), 8))
+            _skryto = [t for t in _linii if round(t[0], 8) not in _svoi_ceny
+                       and not (_lo <= t[0] <= _hi)]
+            _linii = [t for t in _linii if t not in _skryto]
+        if _linii:
             _ceny = [c for c, *_ in _linii] + [_lo, _hi]
             _nlo, _nhi = min(_ceny), max(_ceny)
             _zap = (_nhi - _nlo) * 0.03
@@ -500,6 +498,23 @@ def narisovat(bars: list, alligator: dict, ao_series: list,
                                   edgecolor=_cv, linewidth=0.6,
                                   boxstyle='round,pad=0.25'))
             print(f'[КАДР] уровни на кадре: {len(_linii)}')
+        if _skryto:   # UROVNI_VEZDE_V2
+            _ylo2, _yhi2 = ax.get_ylim()
+            _vv, _vn = 0, 0
+            for _c, _cv, _ls, _pod in sorted(_skryto, key=lambda t: -t[0]):
+                _zn = 5 if abs(_c) < 20 else (3 if abs(_c) < 500 else 2)
+                _verh = _c > _yhi2
+                _y = (0.965 - _vv * 0.05) if _verh else (0.035 + _vn * 0.05)
+                if _verh:
+                    _vv += 1
+                else:
+                    _vn += 1
+                ax.text(0.005, _y, f"{_pod} {_c:.{_zn}f} {'↑ выше' if _verh else '↓ ниже'} кадра",
+                        transform=ax.transAxes, color=_cv, fontsize=10, va='center',
+                        ha='left', family='monospace', zorder=17,
+                        bbox=dict(facecolor='#0d1117', alpha=0.85, edgecolor=_cv,
+                                  linewidth=0.6, linestyle='--', boxstyle='round,pad=0.25'))
+            print(f'[КАДР] уровни вне кадра (чужой этаж): {len(_skryto)}')
     except Exception as _e_ur:
         print(f'[КАДР] уровни не встали ({_e_ur}) — рисую без них')
 
@@ -591,4 +606,4 @@ def kadr(symbol: str, timeframe: str, kuda: Optional[Path] = None,
 
 # KADR_BEZ_PYPLOT_V1 - marker
 
-
+# ODNO_PRAVILO_RB_V1 - marker

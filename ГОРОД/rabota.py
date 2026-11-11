@@ -452,6 +452,16 @@ def uvolit(post_id: str, kem: str = "Шеф", pochemu: str = "") -> tuple:
     # с человеком. Иначе уволенный продолжает числиться на месте, где
     # уже сидит другой.
     _maska_po_postu(imya, None)
+    try:   # ARHIV_BIRZHI_V1: тетрадь и картина ушедшего — в архив Биржи
+        import sys as _s_ab
+        _b_ab = str(KOREN / "Биржа")
+        if _b_ab not in _s_ab.path:
+            _s_ab.path.insert(0, _b_ab)
+        import arhiv_birzhi as _ab
+        _ab.snyat_s_mesta(d.get("цех") or "", d.get("слот") or "", imya)
+    except Exception as _e_ab:
+        print(f"[АРХИВ БИРЖИ] не принял ({_e_ab}) — место свободно, "
+              "тетрадь осталась при нём")
     return True, f"{imya} уволен, место свободно"
 
 
@@ -550,8 +560,6 @@ def magic_dlya_slota(slot: str) -> int:
     следующий свободный, чтобы номера не сталкивались."""
     izvestnye = {"A06": 100001, "A07": 100002, "A08": 100003}
     s = (slot or "").strip().upper()
-    if s in izvestnye:
-        return izvestnye[s]
     zanyato = set()
     if POSTY.exists():
         for d in POSTY.iterdir():
@@ -559,6 +567,11 @@ def magic_dlya_slota(slot: str) -> int:
             m = p.get("magic")
             if isinstance(m, int):
                 zanyato.add(m)
+    # MESTA_PO_POMETKE_V1: известный номер — только если он ещё свободен.
+    # Раньше «A08» в любом цехе получало 100003 — два места с одним счётом.
+    if s in izvestnye and izvestnye[s] not in zanyato:
+        return izvestnye[s]
+    zanyato |= set(izvestnye.values())   # известные номера чужим местам не раздаём
     n = 100001
     while n in zanyato:
         n += 1
@@ -568,3 +581,5 @@ def magic_dlya_slota(slot: str) -> int:
 # MAGIC_PRI_MESTE_V2 - marker
 
 # SLOT_NE_DVAZHDY_V1 - marker
+
+# ARHIV_BIRZHI_V1 - marker

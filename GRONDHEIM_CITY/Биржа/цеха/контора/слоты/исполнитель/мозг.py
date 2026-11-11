@@ -108,9 +108,7 @@ def _read_traders() -> dict:
         # доложил их вердикты. Там был REJECTED — безобидно; но если
         # бы лежал APPROVED с ценой, он поставил бы ордер по вчерашнему
         # слову. Лучше пропустить вход, чем открыть по протухшему.
-        "brut": _svezhiy(t, "brut"),
-        "avan": _svezhiy(t, "avan"),
-        "cons": _svezhiy(t, "cons"),
+        **{k: _svezhiy(t, k) for k in _KLYUCHI},   # PASPORT_KONTORY_V1
     }
 
 
@@ -137,7 +135,7 @@ def _stop_tightens(direction: str, old_stop, new_stop) -> bool:
     return new_stop <= old_stop  # SHORT
 
 
-def _manage_positions_from_table(traders: dict) -> list:
+def _manage_positions_from_table(traders: dict, market: dict = None) -> list:
     """
     Для каждого трейдера с открытой позицией исполняет его действие
     ведения над trading_state["positions"]. Возвращает список изменений
@@ -156,7 +154,7 @@ def _manage_positions_from_table(traders: dict) -> list:
 
     changed = []
     dirty = False
-    for key in ("brut", "avan", "cons"):
+    for key in list(_KLYUCHI):   # PASPORT_KONTORY_V1
         v = traders.get(key, {})
         action = (v.get("action") or "").upper().strip()
         if action in ("", "ENTER", "WAIT", "HOLD"):
@@ -174,7 +172,8 @@ def _manage_positions_from_table(traders: dict) -> list:
                                 "why": "висящей заявки нет"})
                 continue
             if action == "CANCEL":
-                positions = [p for p in positions if p is not zv]
+                positions = [p for p in positions if p is not zv
+                             and not _ego_gorod_zayavka(p, key)]   # DVE_POLOVINY_V1
                 dirty = True
                 print(f"[ОРДЕР] 🚫 {zv.get('trader')} "
                       f"{zv.get('direction')} @ {zv.get('entry')} "
@@ -215,12 +214,24 @@ def _manage_positions_from_table(traders: dict) -> list:
             zv["_ждёт_баров"] = 0
             # на баре перестановки не срабатывает — как при рождении
             zv["_ждёт_с"] = _tekushchiy_bar(tstate)
+            # DVE_POLOVINY_V1: половина города переезжает вместе со своей
+            for _gz in positions:
+                if _ego_gorod_zayavka(_gz, key):
+                    for _pole in ("entry", "stop", "stop_initial", "entry_avg",
+                                  "signal_start", "entry_fractal_price",
+                                  "_ждёт_баров", "_ждёт_с"):
+                        if _pole in zv:
+                            _gz[_pole] = zv[_pole]
             dirty = True
             print(f"[ОРДЕР] 🔄 {zv.get('trader')} {dz} ПЕРЕСТАВЛЕН "
                   f"рукой: вход {_bylo[0]} → {ne}, стоп {_bylo[1]} → {ns}")
             changed.append({"trader": TRADER_NAME[key],
                             "action": "MOVE_ORDER",
                             "from": list(_bylo), "to": [ne, ns]})
+            continue
+        if _mesto_urovnya_klyuch(key) and action in ("MOVE_STOP", "ADD", "CLOSE"):   # DVE_KNIGI_V2 / PASPORT_KONTORY_V1
+            if _kniga_mesta(v, action, tstate, positions, market, changed, key):
+                dirty = True
             continue
         pos = next((p for p in positions
                     if p.get("magic") == magic and p.get("status") == "OPEN"), None)
@@ -242,38 +253,9 @@ def _manage_positions_from_table(traders: dict) -> list:
             changed.append({"trader": TRADER_NAME[key], "action": "MOVE_STOP",
                             "from": old, "to": ns})
 
-        elif action == "ADD":
-            al = v.get("add_lot")
-            if al is None or al <= 0:
-                continue
-            prior_pyramids = pos.get("pyramids", 0)
-            last_add = pos.get("last_add_lot")
-            if prior_pyramids >= 1 and last_add is not None and al > last_add:
-                changed.append({"trader": TRADER_NAME[key], "action": "ADD_REJECTED",
-                                "attempted": al, "last_add_lot": last_add,
-                                "why": "долив крупнее предыдущего — против формы "
-                                       "реверсивной пирамиды (Уильямс)"})
-                continue
-            old_lot = pos.get("lot") or 0
-            pos["lot"] = round(old_lot + al, 4)
-            pos["pyramids"] = prior_pyramids + 1
-            pos["last_add_lot"] = al
-            dirty = True
-            add_change = {"trader": TRADER_NAME[key], "action": "ADD",
-                          "add_lot": al, "lot_now": pos["lot"]}
-            # золотое правило пирамидинга: долив без подтяжки стопа не
-            # бывает — если трейдер тем же ходом назвал new_stop, тянем
-            # его сюда же, той же проверкой монотонности.
-            ns = v.get("new_stop")
-            if ns is not None:
-                old_stop = pos.get("stop")
-                if _stop_tightens(pos.get("direction"), old_stop, ns):
-                    pos["stop"] = ns
-                    add_change["stop_from"] = old_stop
-                    add_change["stop_to"] = ns
-                else:
-                    add_change["stop_move_rejected"] = ns
-            changed.append(add_change)
+        elif action == "ADD":   # CHISTKA_DOLIVOK_V1: старого долива «растит лот» больше нет
+            changed.append({"trader": TRADER_NAME[key], "action": "ADD_REJECTED",
+                            "why": "доливок на этом месте нет"})
 
         elif action == "CLOSE":
             pos["manual_close"] = True
@@ -371,7 +353,8 @@ def _rynok_treydera(key: str, market: dict) -> tuple:
     """(инструмент, этаж) того, чей вердикт исполняем."""
     try:
         import vybor
-        r = vybor.rabota_dlya("торговый_хаос", _KEY_SLOT.get(key, ""))
+        r = vybor.rabota_dlya(_CEH_RABOTY["ceh"],   # PASPORT_KONTORY_V1
+                              _SLOT_KLYUCHA.get(key) or _KEY_SLOT.get(key, ""))
         if r.get("инструмент"):
             return r["инструмент"], r.get("этаж") or market.get("timeframe")
     except Exception:
@@ -398,7 +381,7 @@ def _open_positions_from_table(traders: dict, market: dict) -> list:
 
     bar_time = market.get("bar_time", "")
     opened = []
-    for key in ("brut", "avan", "cons"):
+    for key in list(_KLYUCHI):   # PASPORT_KONTORY_V1
         v = traders.get(key, {})
         if not _is_real_entry(v):
             continue
@@ -468,7 +451,20 @@ def _open_positions_from_table(traders: dict, market: dict) -> list:
             # кран: труба построена, вода шла, а на выходе — ничего.
             "стол_входа": _snyat_stol_vhoda(),
         }
-        tstate["positions"].append(pos)
+        # DVE_POLOVINY_V1: на A08 — две половины, своя и города.
+        if key in _DVE_POLOVINY:
+            _zakryt_protivnye_poloviny(tstate, key, direction)
+            pos["половина"] = "своя"
+            pos["доля"] = 0.5
+            _gor = dict(pos)
+            _gor["magic"] = MAGIC_GORODA[key]
+            _gor["половина"] = "города"
+            tstate["positions"].append(pos)
+            tstate["positions"].append(_gor)
+            print(f"[ДВЕ ПОЛОВИНЫ] {TRADER_NAME[key]} {direction} @ {entry}: "
+                  f"своя + половина города, стоп {stop}")
+        else:
+            tstate["positions"].append(pos)
         opened.append(pos)   # OTLOZHENNY_ORDER_V1: это ЗАЯВКА
 
     if opened:
@@ -515,10 +511,10 @@ def _update_stats(opened: list, traders: dict) -> dict:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     stats = _load_stats()
     stats["runs"] = stats.get("runs", 0) + 1
-    approved = sum(1 for k in ("brut", "avan", "cons")
+    approved = sum(1 for k in _KLYUCHI
                    if _is_real_entry(traders.get(k, {})))
     stats["orders_sent"] = stats.get("orders_sent", 0) + len(opened)
-    stats["orders_skip"] = stats.get("orders_skip", 0) + (3 - approved)
+    stats["orders_skip"] = stats.get("orders_skip", 0) + (len(_KLYUCHI) - approved)
     STATS_PATH.write_text(
         json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     return stats
@@ -554,7 +550,7 @@ def _build_execution_log_facts(traders: dict) -> list:
     сверяется летопись LLM (защита чисел). Это факт, не пересказ.
     """
     log = []
-    for key in ("brut", "avan", "cons"):
+    for key in list(_KLYUCHI):   # PASPORT_KONTORY_V1
         v = traders.get(key, {})
         approved = _is_real_entry(v)
         # VASILY_ISP_WATCH_V1: засада трейдера — своя природа.
@@ -593,7 +589,7 @@ def _sanitize(signal: dict, traders: dict) -> dict:
     sent = sum(1 for o in facts if o["verdict"] == "APPROVED")
     fd = signal.get("final_dna", {}) or {}
     fd["orders_sent"] = sent
-    fd["orders_skip"] = 3 - sent
+    fd["orders_skip"] = len(facts) - sent
     signal["final_dna"] = fd
     return signal
 
@@ -657,7 +653,8 @@ def chat_with_executor(question: str, last_run: Optional[dict] = None,
 # ГЛАВНАЯ ФУНКЦИЯ — Исполнитель замыкает петлю
 # ════════════════════════════════════════════════════════════
 
-def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4") -> dict:
+def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4",
+                 ceh_rabochiy: str = "") -> dict:   # PASPORT_KONTORY_V1
     """
     Один ход Исполнителя. Читает табло троих → КОД открывает позиции по
     факту → LLM пишет летопись. Не смотрит рынок своим органом, не решает.
@@ -665,6 +662,7 @@ def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4") -> dict:
     Возвращает (как движки): {ok, error, narrative, signal, stats, market}.
     """
     # ── 1. Табло троих + контекст бара ───────────────────────
+    _nakryt_stol_kontory(ceh_rabochiy)   # PASPORT_KONTORY_V1
     traders = _read_traders()
 
     from hooks import load_trading_state
@@ -690,7 +688,7 @@ def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4") -> dict:
     # ── 2. РУКА ОТКРЫВАЮЩАЯ (КОД) — позиции по факту табло ────
     opened = _open_positions_from_table(traders, market)
     # КАМЕНЬ 3: рука ведущая — исполняет HOLD/MOVE_STOP/ADD/CLOSE.  # EXECUTOR_MANAGE_HAND_V1
-    managed = _manage_positions_from_table(traders)
+    managed = _manage_positions_from_table(traders, market)   # DVE_KNIGI_V2
     if managed:
         print(f'[EXECUTOR] ✋ ведение: {managed}')
 
@@ -713,13 +711,10 @@ def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4") -> dict:
     # ── 4. РАСКЛАДКА для летописца — табло + что код уже открыл ─
     facts = _build_execution_log_facts(traders)
     table_for_exec = {
-        "traders": {
-            "brut": {k: traders["brut"].get(k) for k in
-                     ("verdict", "reason", "direction", "entry", "stop", "lot")},
-            "avan": {k: traders["avan"].get(k) for k in
-                     ("verdict", "reason", "direction", "entry", "stop", "lot")},
-            "cons": {k: traders["cons"].get(k) for k in
-                     ("verdict", "reason", "direction", "entry", "stop", "lot")},
+        "traders": {   # PASPORT_KONTORY_V1: сколько за столом, столько и тут
+            _k: {k: (traders.get(_k) or {}).get(k) for k in
+                 ("verdict", "reason", "direction", "entry", "stop", "lot")}
+            for _k in _KLYUCHI
         },
         "magic":        MAGIC,
         "facts_log":    facts,
@@ -760,13 +755,13 @@ def run_executor(symbol: str = "XAUUSD", timeframe: str = "H4") -> dict:
                                    "bar_time": market["bar_time"],
                                    "t1_status": tstate.get("iskra", {}).get("t1_status"),
                                    "orders_sent": len(opened),
-                                   "orders_skip": 3 - len(opened),
+                                   "orders_skip": len(_KLYUCHI) - len(opened),
                                    "task_score": None},
                      "history_dna": "", "deliverables": []}
         _append_log(facts_sig, market, opened)
         stats = _update_stats(opened, traders)
         return {"ok": True, "error": f"летопись без голоса (LLM: {e})",
-                "narrative": f"Ордеров: {len(opened)} из 3. Исполнено.",
+                "narrative": f"Ордеров: {len(opened)} из {len(_KLYUCHI)}. Исполнено.",
                 "signal": facts_sig, "stats": stats, "market": market}
 
     # ── 5. Парс + защита чисел + летопись ────────────────────
@@ -861,3 +856,373 @@ def _svezhiy(t: dict, key: str) -> dict:
 
 
 # SVEZHEST_V1 - marker
+
+
+# ── DVE_POLOVINY_V1: две половины позиции (A08) ──────────────
+# Слово Шефа 06.10. «Своя» — номер счёта места, её ведёт и закрывает
+# трейдер. «Города» — свой номер: ни CLOSE, ни перенос стопа, ни долив
+# трейдера её не касаются; закрывает её город — по стопу или когда на
+# дневке сошлись три условия против (hooks._gorod_vedyot_polovinu).
+_DVE_POLOVINY = set()   # DOLIVKI_GORODA_V1: на A08 вместо половин — доливки города
+MAGIC_GORODA = {"cons": 1100003}
+
+
+def _ego_gorod_zayavka(p: dict, key: str) -> bool:
+    return (p.get("magic") == MAGIC_GORODA.get(key)
+            and p.get("status") == "PENDING")
+
+
+def _zakryt_protivnye_poloviny(tstate: dict, key: str, direction: str) -> None:
+    """Вход в обратную сторону = трейдер увидел три условия против —
+    по ним же закрывается и половина города."""
+    mg = MAGIC_GORODA.get(key)
+    for p in tstate.get("positions") or []:
+        if (p.get("magic") == mg and p.get("status") == "OPEN"
+                and str(p.get("direction") or "").upper()
+                != str(direction or "").upper()):
+            p["manual_close"] = True
+            p["закрыл_город"] = True
+            print(f"[ДВЕ ПОЛОВИНЫ] половина города {p.get('direction')} "
+                  f"закрывается: трейдер вошёл в обратную сторону")
+
+
+# DVE_POLOVINY_V1 - marker
+
+# DOLIVKI_GORODA_V1 - marker
+
+
+# ── DVE_KNIGI_V2: книга места в исполнителе ───────────────────
+# Слово Шефа (13.10): «пусть сам». CLOSE (всё или доля), MOVE_STOP, ADD (нога)
+# — ТОЛЬКО по позициям с magic места (100003); копию города (1100003) этот код
+# не трогает. Долив стоп сам не двигает: стоп меняется только если житель назвал
+# новый_стоп в том же приказе (или отдельным MOVE_STOP).
+_KN_RISK_MAX = 1.0      # худший исход книги по стопу не хуже −1 исходного риска
+
+
+def _cena_zakrytiya(market):
+    try:
+        from feed_source import bars as _bars
+        import hooks as _h
+        bs, _pt = _bars((market or {}).get("symbol"), (market or {}).get("timeframe"), 5)
+        bs = _h._tolko_zakrytye(bs)
+        return float(bs[-1]["close"]), str(bs[-1].get("date"))
+    except Exception as _e:
+        print(f"[КНИГА МЕСТА] цена закрытия бара не поднялась ({_e})")
+        return None, None
+
+
+def _kniga_mesta(v, action, tstate, positions, market, changed,
+                  key="cons") -> bool:   # PASPORT_KONTORY_V1
+    import copy as _cp
+    NOMER_MESTA = MAGIC[key]   # PASPORT_KONTORY_V1: номер ЭТОГО места
+    name = TRADER_NAME[key]
+    zhivye = [p for p in positions if p.get("magic") == NOMER_MESTA
+              and p.get("status") == "OPEN" and not p.get("manual_close")]
+    if not zhivye:
+        print(f"[КНИГА МЕСТА] {action}: открытой позиции magic {NOMER_MESTA} нет")
+        return False
+
+    def _fb(tekst):
+        tstate.setdefault(key, {})["vedenie_feedback"] = tekst
+
+    if action == "MOVE_STOP":
+        ns = v.get("new_stop")
+        if ns is None:
+            return False
+        ok = 0
+        for p in zhivye:
+            if _stop_tightens(p.get("direction"), p.get("stop"), ns):
+                p["stop"] = ns
+                ok += 1
+        changed.append({"trader": name, "action": "MOVE_STOP" if ok else "MOVE_STOP_REJECTED",
+                        "to": ns, "magic": NOMER_MESTA, "позиций": ok})
+        print(f"[КНИГА МЕСТА] ✋ MOVE_STOP → {ns}: применён к {ok} из {len(zhivye)} "
+              f"поз. magic {NOMER_MESTA}" + ("" if ok else " — ослабляет стоп, отклонён"))
+        return bool(ok)
+
+    if action == "CLOSE":
+        try:
+            # По контракту трейдера доля — часть пакета (0.1..1.0),
+            # а не абсолютный вес среди всех его ног.
+            share = float(v.get("add_lot")) if v.get("add_lot") is not None else 1.0
+        except (TypeError, ValueError):
+            share = 1.0
+
+        if not (0.0 < share <= 1.0):
+            print(f"[КНИГА МЕСТА] CLOSE отклонён: доля должна быть >0 и <=1, получено {share!r}")
+            changed.append({"trader": name, "action": "CLOSE_REJECTED",
+                            "доля": share, "magic": NOMER_MESTA,
+                            "why": "доля должна быть в диапазоне (0, 1]"})
+            _fb("CLOSE не исполнен: доля должна быть больше 0 и не больше 1")
+            return False
+
+        # 1.0 — безусловное закрытие всего пакета, сколько бы ног в нём ни было.
+        if share >= 1.0 - 1e-9:
+            for p in zhivye:
+                p["manual_close"] = True
+            changed.append({"trader": name, "action": "CLOSE", "доля": 1.0,
+                            "magic": NOMER_MESTA, "позиций": len(zhivye)})
+            print(f"[КНИГА МЕСТА] 🚪 CLOSE целиком: помечено {len(zhivye)} поз. magic {NOMER_MESTA}")
+            return True
+
+        # Частичное закрытие — одинаковая доля каждой ноги.
+        # Число ног и их веса не меняют смысл команды.
+        closed_weight = 0.0
+        remaining_weight = 0.0
+        closed_count = 0
+        for p in list(zhivye):
+            try:
+                w = float(p.get("доля") or 1.0)
+            except (TypeError, ValueError):
+                print("[КНИГА МЕСТА] CLOSE отклонён: у ноги повреждён вес")
+                return False
+            if w <= 0:
+                print("[КНИГА МЕСТА] CLOSE отклонён: у ноги неположительный вес")
+                return False
+
+            cw = round(w * share, 8)
+            rw = round(w - cw, 8)
+
+            # Не создаём нулевые/микроскопические куски из-за округления.
+            if cw <= 0:
+                remaining_weight += w
+                continue
+            if rw <= 1e-8:
+                p["manual_close"] = True
+                closed_weight += w
+                closed_count += 1
+                continue
+
+            c = _cp.deepcopy(p)
+            c["доля"] = cw
+            c["manual_close"] = True
+            c["_частичное"] = True
+            p["доля"] = rw
+            positions.append(c)
+            closed_weight += cw
+            remaining_weight += rw
+            closed_count += 1
+
+        changed.append({"trader": name, "action": "CLOSE_PART",
+                        "доля": share, "magic": NOMER_MESTA,
+                        "закрываемый_вес": round(closed_weight, 8),
+                        "остающийся_вес": round(remaining_weight, 8),
+                        "ног": closed_count})
+        print(f"[КНИГА МЕСТА] 🚪 CLOSE доля {share:g}: закрываем {closed_count} ног "
+              f"пропорционально; вес закрытия {closed_weight:g}, остаток {remaining_weight:g}")
+        return True
+
+    # CHISTKA_DOLIVOK_V1: старой «ноги» (долив по закрытию дня, сторож −1R) больше нет
+    print("[КНИГА МЕСТА] 🔺 ADD не принят — доливок на этом месте нет")
+    return False
+
+
+# DVE_KNIGI_V2 - marker
+
+
+# ══ PASPORT_KONTORY_V1 — кто за столом, берём из паспорта цеха ══
+# Совет называет цех прогона (ceh_rabochiy). Не назвал — цех, который
+# стоит на столе (hooks.postavit_ceh). Старый цех торговый_хаос — те же
+# трое с теми же именами и номерами, что были всегда.
+_KLYUCHI = ["brut", "avan", "cons"]
+_SLOT_KLYUCHA = {"brut": "A06", "avan": "A07", "cons": "A08"}
+_CEH_RABOTY = {"ceh": "торговый_хаос"}
+_STARYE = [("brut", "A06", "BRUT", 100001),
+           ("avan", "A07", "AVANTURIST", 100002),
+           ("cons", "A08", "KONSERVATOR", 100003)]
+
+
+def _kluchi_iz_pasporta(ceh: str) -> list:
+    """[(ключ, место), ...] — места цеха с мозгом. Ключ выводится так же,
+    как у Совета: «ключ» из паспорта, нет — имя места маленькими."""
+    korn = _CEH_DIR.parent / ceh
+    try:
+        man = json.loads((korn / "manifest.json").read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[ИСПОЛНИТЕЛЬ] паспорт цеха {ceh} не прочёлся ({e})")
+        return []
+    out = []
+    for s in man.get("слоты") or []:
+        slot = str(s.get("слот") or "").strip()
+        if not slot or not (korn / "слоты" / slot / "мозг.py").exists():
+            continue
+        out.append((str(s.get("ключ") or slot).strip().lower(), slot))
+    return out
+
+
+def _nakryt_stol_kontory(ceh: str = "") -> None:
+    """Кто сегодня за столом у исполнителя."""
+    ceh = str(ceh or "").strip()
+    if not ceh:
+        try:
+            import mesto_urovnya as _md0
+            ceh = _md0.ceh_seychas()
+        except Exception:
+            ceh = ""
+    ceh = ceh or "торговый_хаос"
+    if ceh == "торговый_хаос":
+        za = list(_STARYE)
+        # A07_NOMER_GORODA_V1: номер места — у города (пост, маска жителя),
+        # как в новом цехе. Таблица — запас, если город номера не знает.
+        try:
+            import mesto_urovnya as _md_ng
+            _za_ng = []
+            for key, slot, imya, nom in za:
+                try:
+                    n_g = _md_ng.nomer_mesta(slot, ceh)
+                except Exception:
+                    n_g = None
+                _za_ng.append((key, slot, imya, int(n_g) if n_g is not None else nom))
+            za = _za_ng
+        except Exception as _e_ng:
+            print(f"[ИСПОЛНИТЕЛЬ] номера мест у города не узнать ({_e_ng}) — по таблице")
+    else:
+        za = []
+        try:
+            import mesto_urovnya as _md
+        except Exception as e:
+            _md = None
+            print(f"[ИСПОЛНИТЕЛЬ] номера мест не узнать ({e})")
+        zanyat = set()
+        for key, slot in _kluchi_iz_pasporta(ceh):
+            if key in zanyat:
+                print(f"[ИСПОЛНИТЕЛЬ] {ceh}/{slot}: ключ «{key}» уже у другого "
+                      f"места — пропускаю")
+                continue
+            try:
+                nom = int(_md.nomer_mesta(slot, ceh)) if _md else None
+            except Exception:
+                nom = None
+            if nom is None:
+                print(f"[ИСПОЛНИТЕЛЬ] {ceh}/{slot}: номера счёта нет — "
+                      f"его решения не исполняю")
+                continue
+            zanyat.add(key)
+            za.append((key, slot, slot.upper(), nom))
+    _CEH_RABOTY["ceh"] = ceh
+    MAGIC.clear()
+    TRADER_NAME.clear()
+    _SLOT_KLYUCHA.clear()
+    _KLYUCHI[:] = []
+    for key, slot, imya, nom in za:
+        _KLYUCHI.append(key)
+        MAGIC[key] = nom
+        TRADER_NAME[key] = imya
+        _SLOT_KLYUCHA[key] = slot
+    print(f"[ИСПОЛНИТЕЛЬ] стол цеха {ceh}: "
+          + (", ".join(f"{_SLOT_KLYUCHA[k]}→{MAGIC[k]}" for k in _KLYUCHI)
+             or "никого"))
+
+
+def _mesto_urovnya_klyuch(key) -> bool:
+    """Это место уровня «продвинутый новичок»? По пометке в паспорте его цеха."""
+    ceh = _CEH_RABOTY.get("ceh") or "торговый_хаос"
+    slot = _SLOT_KLYUCHA.get(key, "")
+    try:
+        import mesto_urovnya as _md
+        return bool(slot) and bool(_md.eto_mesto_urovnya(slot, ceh))
+    except Exception:
+        return key == "cons" and ceh == "торговый_хаос"
+
+
+# PASPORT_KONTORY_V1 - marker
+
+
+# ══ MESTO_BEZ_IMENI_V1 — поле места: новое имя, старые записи читаются ══
+def _pole_mesta(d, imya):
+    try:
+        import mesto_urovnya as _mu_p
+        return _mu_p.pole(d, imya)
+    except Exception:
+        return (d or {}).get(imya)
+
+
+# MESTO_BEZ_IMENI_V1 - marker
+
+
+# ══ RESHIL_ZAKRYL_V1 — CLOSE жителя исполняется по цене бара решения ══
+# Слово Шефа 27.10: «должен как решил, так закрывать». Город закроет позицию
+# на следующем шаге, но по цене и дате того бара, на котором житель решил.
+def _bar_resheniya(symbol, timeframe, bar):
+    """(close, дата) бара решения — бар города, если он есть в ленте."""
+    try:
+        from feed_source import bars as _bars_rz
+        import hooks as _h_rz
+        bs, _pt = _bars_rz(symbol, timeframe, 10)
+        bs = _h_rz._tolko_zakrytye(bs) or bs
+        if bar:
+            for b in reversed(bs or []):
+                if str(b.get("date") or "")[:len(bar)] == bar:
+                    return float(b["close"]), str(b.get("date"))
+        if bs:
+            return float(bs[-1]["close"]), str(bs[-1].get("date"))
+    except Exception as _e_rz:
+        print(f"[РЕШИЛ — ЗАКРЫЛ] цена бара решения не поднялась ({_e_rz}) — "
+              f"закроет город по следующему бару")
+    return None, None
+
+
+_manage_do_resheniya = _manage_positions_from_table
+
+
+def _manage_positions_from_table(traders: dict, market: dict = None) -> list:   # noqa: F811
+    changed = _manage_do_resheniya(traders, market)
+    try:
+        if not any(str((c or {}).get("action") or "").startswith("CLOSE")
+                   for c in (changed or [])):
+            return changed
+        from hooks import load_trading_state, save_trading_state
+        t = load_trading_state()
+        bar = _tekushchiy_bar(t)
+        poz = t.get("positions") or []
+        nado = [p for p in poz
+                if p.get("status") == "OPEN" and p.get("manual_close")
+                and not p.get("закрыл_город") and p.get("закрыть_по") is None]
+        if not nado:
+            return changed
+        kesh = {}
+        for p in nado:
+            k = (p.get("symbol"), p.get("timeframe"))
+            if k not in kesh:
+                kesh[k] = _bar_resheniya(k[0] or (market or {}).get("symbol"),
+                                         k[1] or (market or {}).get("timeframe"), bar)
+            cena, data = kesh[k]
+            if cena is None:
+                continue
+            p["закрыть_по"] = round(cena, 6)
+            p["закрыть_на_баре"] = data or bar
+            print(f"[РЕШИЛ — ЗАКРЫЛ] {p.get('trader')} {p.get('direction')} "
+                  f"@ {p.get('entry')}: решение на баре {data or bar} — закрыть по {cena}")
+        save_trading_state(t)
+    except Exception as _e_rz:
+        print(f"[РЕШИЛ — ЗАКРЫЛ] не записалось ({_e_rz}) — закроет по следующему бару")
+    return changed
+
+
+# RESHIL_ZAKRYL_V1 - marker
+
+
+# ══ DOTYAZHKA_V1 — после конца отрезка новых заявок не ставим ══
+# Прогон дотягивается до закрытия открытой сделки: ведение идёт, входов нет.
+_open_do_dotyazhki = _open_positions_from_table
+
+
+def _open_positions_from_table(traders: dict, market: dict) -> list:   # noqa: F811
+    try:
+        from hooks import load_trading_state as _lts_dt
+        if (_lts_dt() or {}).get("только_ведение"):
+            if any(_is_real_entry((traders or {}).get(k, {})) for k in _KLYUCHI):
+                print("[ДОТЯЖКА] вход не ставлю: отрезок кончился, только ведение")
+            return []
+    except Exception:
+        pass
+    return _open_do_dotyazhki(traders, market)
+
+
+# DOTYAZHKA_V1 - marker
+
+
+# A07_NOMER_GORODA_V1 - marker
+
+
+# CHISTKA_DOLIVOK_V1 - marker

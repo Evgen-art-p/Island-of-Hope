@@ -411,3 +411,22 @@ async def sprosit(vopros: str, istoria: list = None,
 # MAYAK_KHRANITEL_V1 — маркер идемпотентности
 
 # MAYAK_SVODKI_V1 - marker
+
+
+# ══ OSMYSLENIE_POSTOV_V1 — разговор на посту идёт в эпизод осмысления ══
+_sprosit_do_osm = sprosit
+
+
+async def sprosit(*a, **k):   # noqa: F811
+    otvet = await _sprosit_do_osm(*a, **k)
+    try:
+        import osmyslenie as _om
+        vopros = k.get("vopros") if "vopros" in k else (a[0] if a else "")
+        kto = k.get("dlya_kogo") or "Шеф"
+        _om.epizod_razgovora(POST_ID, vopros, otvet, kto)
+    except Exception as _e_osm:
+        print(f"[ОСМЫСЛЕНИЕ] разговор не лёг в эпизод ({_e_osm})")
+    return otvet
+
+
+# OSMYSLENIE_POSTOV_V1 - marker

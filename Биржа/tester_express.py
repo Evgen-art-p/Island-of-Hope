@@ -208,8 +208,8 @@ _VEDENIE_PREFIX = {"A06": "brut", "A07": "avan", "A08": "cons"}
 
 def _primenit_vedenie(sid, r, pos_magic, md, out=print):
     """Читает signal разбуженного хозяина и применяет action к позиции
-    с magic=pos_magic. MOVE_STOP только в защиту; ADD растит лот +
-    тянет стоп в сейф. Возвращает True, если что-то реально изменил."""
+    с magic=pos_magic. MOVE_STOP только в защиту; ADD — нет (старые
+    доливки выброшены, CHISTKA_DOLIVOK_V1). True, если что-то изменил."""
     from hooks import load_trading_state, save_trading_state
 
     sig = (r or {}).get("signal", {}) or {}
@@ -221,7 +221,7 @@ def _primenit_vedenie(sid, r, pos_magic, md, out=print):
     new_stop = sig.get(f"{pref}_new_stop")
     add_lot = sig.get(f"{pref}_add_lot")
 
-    if action not in ("ADD", "MOVE_STOP"):
+    if action not in ("MOVE_STOP",):   # CHISTKA_DOLIVOK_V1: ADD не исполняется
         # CLOSE_TREYDERA_V1: CLOSE — воля трейдера. Ставим manual_close,
         # settle закроет ВЕСЬ ПАКЕТ по close (причина MANUAL_CLOSE)
         # на следующем баре — раньше стопа и колокола.
@@ -270,51 +270,6 @@ def _primenit_vedenie(sid, r, pos_magic, md, out=print):
             else:
                 out(f"     └─ ✋ MOVE_STOP отклонён (не в защиту / за цену): {ns}")
 
-        elif action == "ADD" and add_lot is not None:
-            try:
-                al = float(add_lot)
-            except (TypeError, ValueError):
-                al = 0.0
-            # REVERSE_PYRAMID_DISCIPLINE_V1: реверсивная пирамида СУЖАЕТСЯ кверху.
-            # Долив > предыдущей ноги → полный ОТКАЗ + feedback в стол.
-            _last_leg = float(p.get("last_leg") or p.get("lot_base")
-                              or p.get("lot") or 0.0)
-            if al > 0 and _last_leg > 0 and al > _last_leg * 1.0001:
-                _pref = _VEDENIE_PREFIX.get(sid)
-                if _pref:
-                    ts.setdefault(_pref, {})
-                    ts[_pref]["vedenie_feedback"] = (
-                        f"Долив отклонён: превышен размер предыдущей ноги "
-                        f"({al} > {_last_leg}). Реверсивная пирамида только "
-                        f"сужается кверху.")
-                    changed = True
-                out(f"     └─ ⛔ ADD ОТКЛОНЁН: {al} > предыдущей ноги "
-                    f"{_last_leg} — дисциплина пирамиды (полный отказ)")
-            elif al > 0:
-                # PAKET_PYRAMIDA_V1: средневзвешенная цена ПАКЕТА.
-                # entry_new = close бара долива (текущая цена входа ноги).
-                _lot_old = float(p.get("lot") or 0.0)
-                _ea_old = float(p.get("entry_avg", p.get("entry") or 0.0))
-                _entry_new = float(close) if close is not None else _ea_old
-                _lot_new = _lot_old + al
-                if _lot_new > 0:
-                    p["entry_avg"] = round(
-                        (_ea_old * _lot_old + _entry_new * al) / _lot_new, 6)
-                p["lot"] = round(_lot_new, 4)
-                # весь пакет за Зубами (§7): тянем стоп в сейф, если Зубы
-                # уже прошли вход и стоп ещё не там
-                if teeth is not None and old_stop is not None:
-                    if d == "LONG" and teeth > old_stop and (close is None or teeth < close):
-                        p["stop"] = round(teeth, 6)
-                    elif d == "SHORT" and teeth < old_stop and (close is None or teeth > close):
-                        p["stop"] = round(teeth, 6)
-                p["last_leg"] = round(al, 4)  # REVERSE_PYRAMID_DISCIPLINE_V1: потолок для след. долива
-                p["dolivok"] = int(p.get("dolivok", 0)) + 1
-                changed = True
-                out(f"     └─ 🔺 ADD применён: лот +{al} → {p['lot']}"
-                    f" (доливок: {p['dolivok']}), стоп {p.get('stop')}")
-            else:
-                out("     └─ 🔺 ADD без объёма — гашу (лот не трогаю)")
 
     if changed:
         save_trading_state(ts)
@@ -1309,3 +1264,6 @@ if __name__ == "__main__":
 # ISKRA_WORKING_TF_FIRST_V1 — маркер идемпотентности
 
 # TESTER_ISKRA_BD_FIX_V1 — маркер идемпотентности
+
+
+# CHISTKA_DOLIVOK_V1 - marker

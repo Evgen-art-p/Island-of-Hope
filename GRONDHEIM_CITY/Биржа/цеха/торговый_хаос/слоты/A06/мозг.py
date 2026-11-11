@@ -140,21 +140,38 @@ def _glaz(_chat, symbol, timeframe, slot, preambula=None):
             put = grafik.kadr(symbol, timeframe, linii=False)  # KADR_BEZ_ALLIGATORA_V1
         except Exception as e:
             print(f"[КАДР] не нарисовался ({e}) — работаю без глаз")
+        # BIRZHA_BEZ_TANCEV_V1: картинка Шефа — ПЕРВОЙ и ВСЕГДА (в
+        # разговоре). Раньше она шла лишь в придачу к своему кадру:
+        # кадр не нарисовался — не шло ничего, трейдер говорил вслепую.
+        _shefa = _kadr_shefa(razgovor=preambula is not None)
+        _svoy = []
         if put:
+            import base64 as _b64
+            from pathlib import Path as _Pp
+            _svoy = [{"base64": _b64.b64encode(
+                          _Pp(put).read_bytes()).decode("ascii"),
+                      "mime_type": "image/png",
+                      "name": ("ТВОЙ СТОЛ — рынок сейчас, ДРУГОЕ ВРЕМЯ · "
+                               if _shefa else "ТВОЙ КАДР, рынок сейчас · ")
+                              + _Pp(put).name}]
+        # SHEF_KARTINKA_ODNA_V1: показал Шеф — идёт только его картинка;
+        # свой стол житель возьмёт рукой, если понадобится.
+        _kartinki = _shefa if _shefa else _svoy
+        _pomet_shefa = (("[Шеф показал картинку «" + _shefa[0].get("name", "")
+                         + "» — она ЕДИНСТВЕННАЯ. Вопросы Шефа — про неё. Твой стол "
+                         "сейчас не приложен: понадобится — возьми рукой; про него отвечай, только "
+                         "если Шеф спросит. Не видишь того, о чём спрашивают, — "
+                         "так и скажи.]\n\n") if _shefa else "")
+        if _kartinki:
             try:
                 import base64
                 from pathlib import Path as _P
                 from llm import chat_with_images
                 return chat_with_images(
                     system=system,
-                    user_text=(preambula if preambula is not None
-                               else _GLAZ_PREAMBULA) + user,
+                    user_text=_pomet_shefa + (preambula if preambula is not None else _GLAZ_PREAMBULA) + user,
                     knowledge=knowledge,
-                    images=([{"base64": base64.b64encode(
-                                 _P(put).read_bytes()).decode("ascii"),
-                              "mime_type": "image/png",
-                              "name": "ТВОЙ КАДР, рынок сейчас · " + _P(put).name}]
-                            + _kadr_shefa(razgovor=preambula is not None)),
+                    images=_kartinki,
                     knowledge_images=_obrazcy(),  # OBRAZCY_V_ZNANIYA_V1
                     # RAZGOVOR_SO_STOLOM_V1: история и температура
                     # ронялись здесь — с картинкой он забывал разговор
@@ -231,7 +248,29 @@ def _glaz_s_rukami(_chat, symbol, timeframe, slot, ceh, self_key,
             put = grafik.kadr(symbol, timeframe, linii=False)  # KADR_BEZ_ALLIGATORA_V1
         except Exception as e:
             print(f"[КАДР] не нарисовался ({e}) — работаю без глаз")
+        # BIRZHA_BEZ_TANCEV_V1: картинка Шефа — ПЕРВОЙ и ВСЕГДА (в
+        # разговоре). Раньше она шла лишь в придачу к своему кадру:
+        # кадр не нарисовался — не шло ничего, трейдер говорил вслепую.
+        _shefa = _kadr_shefa(razgovor=preambula is not None)
+        _svoy = []
         if put:
+            import base64 as _b64
+            from pathlib import Path as _Pp
+            _svoy = [{"base64": _b64.b64encode(
+                          _Pp(put).read_bytes()).decode("ascii"),
+                      "mime_type": "image/png",
+                      "name": ("ТВОЙ СТОЛ — рынок сейчас, ДРУГОЕ ВРЕМЯ · "
+                               if _shefa else "ТВОЙ КАДР, рынок сейчас · ")
+                              + _Pp(put).name}]
+        # SHEF_KARTINKA_ODNA_V1: показал Шеф — идёт только его картинка;
+        # свой стол житель возьмёт рукой, если понадобится.
+        _kartinki = _shefa if _shefa else _svoy
+        _pomet_shefa = (("[Шеф показал картинку «" + _shefa[0].get("name", "")
+                         + "» — она ЕДИНСТВЕННАЯ. Вопросы Шефа — про неё. Твой стол "
+                         "сейчас не приложен: понадобится — возьми рукой; про него отвечай, только "
+                         "если Шеф спросит. Не видишь того, о чём спрашивают, — "
+                         "так и скажи.]\n\n") if _shefa else "")
+        if _kartinki:
             try:
                 import base64
                 from pathlib import Path as _P
@@ -239,14 +278,9 @@ def _glaz_s_rukami(_chat, symbol, timeframe, slot, ceh, self_key,
                 import ruki_treydera as _rt
                 return chat_with_images_and_tools(
                     system=system,
-                    user_text=(preambula if preambula is not None
-                               else _GLAZ_PREAMBULA) + user,
+                    user_text=_pomet_shefa + (preambula if preambula is not None else _GLAZ_PREAMBULA) + user,
                     knowledge=knowledge,
-                    images=([{"base64": base64.b64encode(
-                                 _P(put).read_bytes()).decode("ascii"),
-                             "mime_type": "image/png",
-                             "name": "ТВОЙ КАДР, рынок сейчас · " + _P(put).name}]
-                            + _kadr_shefa(razgovor=preambula is not None)),
+                    images=_kartinki,
                     knowledge_images=_obrazcy(),  # OBRAZCY_V_ZNANIYA_V1
                     tools_schema=_rt.shema(timeframe),
                     executors=_rt.ruki(symbol, ceh, slot, self_key,
@@ -460,7 +494,7 @@ def _append_diary(signal: dict, diary_entry: dict, market: dict, table: dict):
         "почему":    signal.get("brut_reason"),
         "рычаг":     bool(signal),
         # SKVOZNAYA_PAMYAT_V1: из какого прогона (None — живая работа)
-        "прогон":    ((table or {}).get("прогон") or {}).get("id"),
+        "прогон":    _nomer_progona(table),   # PROGON_V_TETRADI_V1
         "ключ":      _klyuch_svoy(),
         # голос трейдера о себе — вводная и поступок (из diary_entry промта)
         "input":     (diary_entry or {}).get("input", ""),
@@ -1169,8 +1203,9 @@ def run_brut(symbol: str = "XAUUSD", timeframe: str = "H4",
             "Вход уже сделан, и сделал его ТЫ. Не ищи его заново и не "
             "суди, годится ли это место: поздно, ты уже в рынке.\n"
             "Посмотри на кадр и реши, что делать со сделкой: держать "
-            "как есть, подтянуть стоп, долить или закрыть. Стоп по "
-            "фракталам ведёт код — трогай его, только если видишь "
+            "как есть, подтянуть стоп, долить или закрыть. Стоп за "
+            "Зубами ведёт код, когда линии в ряд; в болтанке он "
+            "стоит. Трогай его, только если видишь "   # STOP_KAK_EST_V1
             "причину.\n"
             "Всё, что написано НИЖЕ про поиск входа и три места, — "
             "справка об устройстве, а не задание на сейчас.\n"
@@ -1649,9 +1684,16 @@ def _svoyo_blok() -> str:
         from hooks import load_trading_state as _lts
         _t = _lts() or {}
         _moi = []
+        _moy_magic = _my_magic()   # SVOYO_TOLKO_SVOYO_V1
         for _p in (_t.get("positions") or []):
             _st = str(_p.get("status") or "").upper()
             if _st not in ("OPEN", "PENDING"):
+                continue
+            # SVOYO_TOLKO_SVOYO_V1: своё — по номеру счёта места.
+            # Раньше сюда шли все заявки цеха, и Синди приняла
+            # Ильвину заявку по фунту за свою (04.12.2020).
+            if (_moy_magic is not None and _p.get("magic") is not None
+                    and _p.get("magic") != _moy_magic):
                 continue
             _n = str(_p.get("direction") or "?").upper()
             _c = _p.get("entry")
@@ -1878,3 +1920,32 @@ def _gorod_skazal_hvatit() -> bool:
 # ZHIVOYE_SOOBSHCHENIE_CHISTO_V1 - marker
 
 # OKRUZHENIE_BARA_V1 - marker
+
+# BIRZHA_BEZ_TANCEV_V1 - marker
+
+# SHEF_KARTINKA_ODNA_V1 - marker
+
+# STOP_KAK_EST_V1 - marker
+
+
+# ── PROGON_V_TETRADI_V1: номер прогона — оттуда, где он лежит ──
+# Стол номера прогона не знает: его кладёт прогон на общую площадь
+# города. Раньше брали со стола — и каждая запись шла с пустым
+# номером, а «ТВОИ СОБЫТИЯ» в прогоне всегда были пустыми.
+def _nomer_progona(table=None):
+    try:
+        n = ((table or {}).get("прогон") or {}).get("id")
+        if n:
+            return n
+    except Exception:
+        pass
+    try:
+        from hooks import load_trading_state as _lts_pn
+        return ((_lts_pn() or {}).get("прогон") or {}).get("id")
+    except Exception:
+        return None
+
+
+# PROGON_V_TETRADI_V1 - marker
+
+# SVOYO_TOLKO_SVOYO_V1 - marker

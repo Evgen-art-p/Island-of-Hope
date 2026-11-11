@@ -635,6 +635,19 @@ def detect_necron_bar(
     teeth_sh = _shifted_series(teeth_series, 5)
     lips_sh  = _shifted_series(lips_series, 3)
 
+    # ODNO_PRAVILO_RB_V1: само правило — в _necron_na_bare, одно на всех
+    return _necron_na_bare(bars, jaw_sh, teeth_sh, lips_sh, i)
+
+
+def _necron_na_bare(bars, jaw_sh, teeth_sh, lips_sh, i) -> dict:
+    """ODNO_PRAVILO_RB_V1: формула Necron (iDivergenceBar.mq4) для бара
+    i. Линии — уже СО СДВИГОМ. Это та же проверка, что стояла внутри
+    detect_necron_bar, вынесенная, чтобы её можно было спросить про
+    любой бар: кадру (все стрелки) и столу (где последний)."""
+    empty = {"direction": None, "price": None}
+    if i < 1 or i >= len(bars) or i >= len(jaw_sh) \
+            or i >= len(teeth_sh) or i >= len(lips_sh):
+        return empty
     j, t, l = jaw_sh[i], teeth_sh[i], lips_sh[i]
     if j is None or t is None or l is None:
         return empty
@@ -650,6 +663,25 @@ def detect_necron_bar(
     if b["low"] < p["low"] and b["close"] > mid and b["high"] < dn:
         return {"direction": "BULL", "price": round(b["low"], 6)}
     return empty
+
+
+def vse_necron(bars, jaw_series, teeth_series, lips_series,
+               s: int = 1) -> list:
+    """ODNO_PRAVILO_RB_V1: все разворотники ряда, начиная с бара s, тем
+    же правилом. Линии — СЫРЫЕ ряды, сдвиг делается здесь, как в
+    detect_necron_bar. Возвращает [{i, сторона, цена, дата}]."""
+    if not bars or not jaw_series or not teeth_series or not lips_series:
+        return []
+    jaw_sh = _shifted_series(jaw_series, 8)
+    teeth_sh = _shifted_series(teeth_series, 5)
+    lips_sh = _shifted_series(lips_series, 3)
+    out = []
+    for i in range(max(1, int(s)), len(bars)):
+        r = _necron_na_bare(bars, jaw_sh, teeth_sh, lips_sh, i)
+        if r["direction"]:
+            out.append({"i": i, "сторона": r["direction"],
+                        "цена": r["price"], "дата": bars[i].get("date")})
+    return out
 
 
 
@@ -1326,3 +1358,5 @@ if __name__ == "__main__":
 # REZINKA_CHESTNAYA_V1 - marker
 
 # AC_VON_V1 - marker
+
+# ODNO_PRAVILO_RB_V1 - marker

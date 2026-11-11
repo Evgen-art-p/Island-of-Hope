@@ -27,6 +27,7 @@ _PUSTO = {"инструмент": "", "этаж": "", "кто": "", "когда"
 
 
 def _prochitat() -> dict:
+    _FAYL = _fayl()   # SVOYA_VAHTA_V1: экран своего цеха
     try:
         if _FAYL.is_file():
             d = json.loads(_FAYL.read_text(encoding="utf-8"))
@@ -63,6 +64,7 @@ def postavit(instrument: str, etazh: str, kto: str = "",
     зачем. Переезд двигает вахту, значит меняет, когда человека вообще
     будут будить; такое решение должно быть видно и разбираемо.
     """
+    _FAYL = _fayl()   # SVOYA_VAHTA_V1: экран своего цеха
     instrument = (instrument or "").strip().upper()
     etazh = (etazh or "").strip().upper()
     if not instrument or not etazh:
@@ -99,3 +101,24 @@ def slovami() -> str:
         return "выбор не поставлен"
     kto = f" · поставил {v['кто']}" if v["кто"] else ""
     return f"{v['инструмент']} {v['этаж']}{kto}"
+
+
+# ══ SVOYA_VAHTA_V1 — у каждого цеха свой экран ═══════════════════
+# Чей экран — решает тот же закон, что и стол (hooks.ceh_seychas):
+# работа, вкладка, общая ячейка. Старый цех и «никакой» — прежний файл.
+# Новый цех — свой файл у себя дома.
+def _fayl() -> Path:
+    try:
+        import sys as _s_e
+        _h = _s_e.modules.get("hooks")
+        c = str(_h.ceh_seychas() or "") if (_h is not None and
+                                          hasattr(_h, "ceh_seychas")) else ""
+    except Exception:
+        c = ""
+    if not c or c == "торговый_хаос":
+        return _FAYL
+    return (Path(__file__).resolve().parent.parent / "GRONDHEIM_CITY"
+            / "Биржа" / "цеха" / c / "данные" / "vybor_ekrana.json")
+
+
+# SVOYA_VAHTA_V1 - marker

@@ -61,11 +61,11 @@ def _sohranit(ceh: str, slot: str, d: dict):
         print(f"[КАРТИНА] не записалась: {e}")
 
 
-def chitat(ceh: str, slot: str, symbol: str) -> dict:
+def chitat(ceh: str, slot: str, symbol: str, kto: str = "") -> dict:
+    # KARTINA_TOLKO_SVOYO_V1: только записи того, кто сидит на месте
     s = (symbol or "").strip().upper()
-    d = json.loads(json.dumps(PUSTO))
-    d.update((_vsya(ceh, slot).get(s) or {}))
-    return d
+    kto = (kto or "").strip() or _kto_sidit(ceh, slot) or slot
+    return _tolko_svoyo(_vsya(ceh, slot).get(s) or {}, kto)
 
 
 def obyavit(ceh: str, slot: str, symbol: str, chto: str, kto: str = "",
@@ -84,9 +84,11 @@ def obyavit(ceh: str, slot: str, symbol: str, chto: str, kto: str = "",
         return False, "не сказано, по какому инструменту"
     chto = (chto or "").strip().lower()
     vsya = _vsya(ceh, slot)
-    moya = vsya.get(s) or json.loads(json.dumps(PUSTO))
+    # KARTINA_TOLKO_SVOYO_V1: пишем поверх СВОЕЙ картины, не чужой
+    _ya = (kto or "").strip() or _kto_sidit(ceh, slot) or slot
+    moya = _tolko_svoyo(vsya.get(s) or {}, _ya)
     seychas = datetime.now().isoformat(timespec="seconds")
-    zapis = {"кто": kto or slot, "почему": (pochemu or "").strip()[:500],
+    zapis = {"кто": _ya, "почему": (pochemu or "").strip()[:500],
              "когда": seychas}
     # KARTINA_HOD_V1: куда идёт и откуда смотрим.
     _napr = (napravlenie or "").strip().upper()
@@ -164,9 +166,9 @@ def obyavit(ceh: str, slot: str, symbol: str, chto: str, kto: str = "",
     return True, itog
 
 
-def slovami(ceh: str, slot: str, symbol: str) -> str:
+def slovami(ceh: str, slot: str, symbol: str, kto: str = "") -> str:
     """Своя картина словами. Только то, что он сам записал."""
-    d = chitat(ceh, slot, symbol)
+    d = chitat(ceh, slot, symbol, kto)
     tn = d.get("точка_ноль")
     L = [f"=== ТВОЯ КАРТИНА · {(symbol or '').upper()} ==="]
     if not tn:
@@ -210,3 +212,47 @@ def slovami(ceh: str, slot: str, symbol: str) -> str:
 # KARTINA_SVOYA_V1 - marker
 
 # KARTINA_HOD_V1 - marker
+
+
+# ── KARTINA_TOLKO_SVOYO_V1: картина — только своя ─────────────
+# Картина лежит при месте, а место переживает жильцов. Своим считаем
+# только то, что подписано тем, кто сидит сейчас; чужое не показываем
+# и поверх него не пишем. Старые чужие записи (до 27.09, код тогда
+# врал) уехали в чулан; новые чужие — дело Архива Биржи.
+
+def _kto_sidit(ceh: str, slot: str) -> str:
+    """Кто сидит на месте — по Странице Работы. Не узнали — пусто."""
+    try:
+        import sys as _s
+        _g = str(_KOREN / "ГОРОД")
+        if _g not in _s.path:
+            _s.path.insert(0, _g)
+        import rabota
+        return (rabota.kto_na_slote(ceh, slot) or "").strip()
+    except Exception:
+        return ""
+
+
+def _tolko_svoyo(moya: dict, kto: str) -> dict:
+    """Из картины места — только записи этого жителя."""
+    d = json.loads(json.dumps(PUSTO))
+    kto = (kto or "").strip()
+    if not kto or not isinstance(moya, dict):
+        return d
+
+    def _svoyo(z):
+        return isinstance(z, dict) and str(z.get("кто") or "").strip() == kto
+
+    tn = moya.get("точка_ноль")
+    if _svoyo(tn):
+        d["точка_ноль"] = tn
+        d["попыток"] = int(moya.get("попыток") or 0)
+        if _svoyo(moya.get("волна")):
+            d["волна"] = moya["волна"]
+        if _svoyo(moya.get("откат")):
+            d["откат"] = moya["откат"]
+    d["заметки"] = [z for z in (moya.get("заметки") or []) if _svoyo(z)]
+    return d
+
+
+# KARTINA_TOLKO_SVOYO_V1 - marker

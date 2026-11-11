@@ -115,6 +115,8 @@ def _zhurnal_zakrytiy() -> dict:
                     if _tsz < _OKNO[0] or (_OKNO[1] is not None
                                            and _tsz >= _OKNO[1]):
                         continue
+                if z.get("magic") in (1100003, 2100003) or z.get("тень") or z.get("книга") == "города":   # CHISTYY_OTCHYOT_V1
+                    continue          # тень с тем же входом затирала итог места на карточке
                 vh = z.get("entry")
                 if isinstance(vh, (int, float)):
                     _ZHURNAL[round(float(vh), 5)] = z
@@ -243,6 +245,9 @@ def _shapka(ceh: str, papka: Path, mesta: list):
                     if _OKNO[0] is None or _t < _OKNO[0]:
                         continue
                     if _OKNO[1] is not None and _t >= _OKNO[1]:
+                        continue
+                    if (_z.get("magic") in (1100003, 2100003) or _z.get("тень")
+                            or _z.get("книга") == "города"):   # CHISTYY_OTCHYOT_V1: тень — не сделка
                         continue
                     _rz = _z.get("pnl_r")
                     if isinstance(_rz, (int, float)):
@@ -431,3 +436,5 @@ def page_otchyot(ceh: str = "торговый_хаос", papka: str = ""):
 
         for i, m in enumerate(mesta, 1):
             _kartochka(ceh, p, i, m)
+
+# CHISTYY_OTCHYOT_V1 - marker
