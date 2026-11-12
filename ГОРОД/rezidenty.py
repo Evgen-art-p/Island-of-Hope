@@ -442,3 +442,30 @@ def kto_na_postu_vse(post_id: str) -> list:   # noqa: F811
 
 
 # ARCHI_V_KARTOTEKU_V1 - marker
+
+
+# ══ PROPISKA_MIRA_V1: копию на работе не будят ══
+_lichnost_do_propiski = lichnost_na_postu
+
+
+def lichnost_na_postu(*a, **k):   # noqa: F811
+    rez = _lichnost_do_propiski(*a, **k)
+    try:
+        p, dom = rez
+        if p and dom is not None:
+            import sys as _s_pr
+            from pathlib import Path as _P_pr
+            _g = str(_P_pr(__file__).resolve().parent)
+            if _g not in _s_pr.path:
+                _s_pr.path.insert(0, _g)
+            import propiska as _pr
+            ok, pochemu = _pr.priznan(dom=dom)
+            if not ok:
+                print(f"[ПРОПИСКА] {(p or {}).get('Official_Name') or getattr(dom, 'name', '')}: "
+                      f"{pochemu} — на пост не встаёт")
+                return None, None
+    except Exception:
+        pass
+    return rez
+
+# PROPISKA_MIRA_V1 - marker

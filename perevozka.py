@@ -1,41 +1,40 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# PEREVOZKA_ZHITELYA_V1
+# PEREVOZKA_ZHITELYA_V3
 """
-ПЕРЕВОЗКА ЖИТЕЛЯ — один файл на оба берега.
+ПЕРЕВОЗКА ЖИТЕЛЯ · с ключом, в обе стороны. Один файл на оба берега.
 
-Запускается двойным щелчком по `ПЕРЕВОЗКА.bat`. Сам понимает, где он:
+Слово Шефа 29.09 и 11.11: житель едет ВЕСЬ — с лицом и со всей памятью,
+включая рабочий след; квартира в городе остаётся за ним, он может вернуться;
+у жителя один ключ, и прописан он ровно в одном месте; на причале — сверка.
 
-    НА МАТЕРИКЕ он ОТПРАВИТЕЛЬ. Показывает жителей, ты выбираешь
-    номером. Он снимает человека с места (личное при этом уезжает к
-    нему домой), пакует дом в архив и кладёт в `_ОТПРАВКА/`.
+    ОТПРАВИТЬ (любой берег, где житель прописан):
+        1. снимается с места (работы);
+        2. пакуется ВЕСЬ дом: паспорт, лицо, маски, память, опыт, работа,
+           чаты — кроме служебного мусора и видео/звука; фразы печати нет;
+        3. у каждого файла — отпечаток;
+        4. город переписывает прописку на место прибытия и кладёт в архив
+           ПРОПУСК РЕЙСА, заверенный печатью города.
+        Дом и жильё здесь ОСТАЮТСЯ: в паспорте отметка «уехал(а) туда-то,
+        рейс такой-то». Пока его нет — не будят и не сажают на работу.
 
-    НА ОСТРОВЕ он ПОЛУЧАТЕЛЬ. Находит архив рядом, распаковывает
-    человека в ковчег и тут же предлагает посадить на свободное место —
-    выбрать номером. Всё.
+    ПРИНЯТЬ (берег прибытия):
+        1. сверка отпечатков; 2. сверка печати пропуска и что рейс новый;
+        3. житель — на ПРИЧАЛ (ковчег), прописан здесь. Если здесь был его
+           прежний дом (возвращение) — прежняя папка откладывается рядом,
+           житель возвращается в свою квартиру со всем, что прожил;
+        4. дальше — твоими руками, по трём ступеням: ЕСТЬ (причал) →
+           ЖИВЁТ (ПРОПИСКА в жильё: жильё квартала + его слова) → РАБОТАЕТ (пост).
+        Не сошлось — не принимается, архив уходит в _ПРИБЫТИЕ/отказ.
 
-ЧТО ЕДЕТ В АРХИВЕ
-
-    Паспорт с ДНК, маски, метки и маяки, слои (ядро, отклик, чувства,
-    архив), опыт — включая дневники, которые уехали с ним при снятии с
-    места. То есть человек целиком, со всей кухней из отбытия.
-
-ЧТО НЕ ЕДЕТ
-
-    Прочитанное, чаты, склады и картинки. Это материковая кухня: там
-    учат, там и остаётся. На острове человеку это не работает, а весит
-    много.
-
-ПОЧЕМУ АРХИВОМ, А НЕ ПО СЕТИ
-
-    Берега — разные машины, и часто разные страны. Архив кладётся,
-    переносится как угодно (флешка, облако, RDP) и распаковывается.
-    Никаких паролей, портов и «а почему не соединяется».
+Архивом, а не по сети: берега — разные машины. Архив переносится как угодно.
 """
 import argparse
+import hashlib
 import json
 import shutil
 import sys
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -52,15 +51,10 @@ KOVCHEG = CITY / "жители" / "ковчег"
 OTPRAVKA = KOREN / "_ОТПРАВКА"
 PRIBYTIE = KOREN / "_ПРИБЫТИЕ"
 
-# что берём из дома человека — это он сам
-VEZYOM = {"passport.json", "_слои_заведены.txt"}
-VEZYOM_PAPKI = {"маски", "2_метки", "3_маяки", "core", "resonance",
-                "sensory", "archive", "опыт", "метки", "маяки"}
-# материковая кухня — остаётся дома
-NE_VEZYOM = {"прочитано", "чаты", "академия_чаты", "ректор_чаты", "руда",
-             "медиа", "__pycache__"}
-TYAZHYOLOE = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp3", ".mp4",
-              ".wav", ".zip"}
+NE_VEZYOM_PAPKI = {"__pycache__", ".git"}
+NE_VEZYOM_RASSH = {".mp3", ".mp4", ".wav", ".mov", ".avi", ".zip", ".pyc", ".tmp"}
+SEKRET = "Creator_Seal"          # фраза печати — никогда не едет
+KUDA_PO_UMOLCHANIYU = ""            # пусто — с материка на «I1», с острова домой на «T1»
 
 
 def skazat(s=""):
@@ -71,17 +65,32 @@ def cherta():
     skazat("=" * 62)
 
 
-def eto_ostrov() -> bool:
-    return (KOREN / "ostrov_puls.py").is_file() or \
-           (KOREN / "OSTROV_NADEZHDY.md").is_file()
+def _sprosit(vopros: str) -> str:
+    try:
+        return input(vopros).strip()
+    except Exception:
+        return ""
+
+
+def _put_goroda():
+    for p in (KOREN / "ГОРОД",):
+        if str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+
+
+def _propiska():
+    _put_goroda()
+    try:
+        import propiska
+        return propiska
+    except Exception as e:
+        skazat(f"  x закона прописки нет ({e}) — сначала propiska_mira.py / переселение")
+        return None
 
 
 def _rabota():
-    """Механизм работы — им снимаем и сажаем. Нет его — работаем без."""
+    _put_goroda()
     try:
-        put = str(KOREN / "ГОРОД")
-        if put not in sys.path:
-            sys.path.insert(0, put)
         import rabota
         return rabota
     except Exception as e:
@@ -89,11 +98,39 @@ def _rabota():
         return None
 
 
-def _sprosit(vopros: str) -> str:
+def eto_ostrov() -> bool:
+    pr = _propiska()
+    if pr is not None:
+        try:
+            return not pr.eto_materik()
+        except Exception:
+            pass
+    return (KOREN / "ostrov_puls.py").is_file() or (KOREN / "OSTROV_NADEZHDY.md").is_file()
+
+
+def _otpechatok(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _bez_sekreta(otn: Path, data: bytes) -> bytes:
+    """Из json-файлов убираем фразу печати, если где-то осталась."""
+    if otn.suffix.lower() != ".json" or SEKRET.encode() not in data:
+        return data
     try:
-        return input(vopros).strip()
+        d = json.loads(data.decode("utf-8"))
     except Exception:
-        return ""
+        return data
+
+    def chistit(x):
+        if isinstance(x, dict):
+            x.pop(SEKRET, None)
+            for v in x.values():
+                chistit(v)
+        elif isinstance(x, list):
+            for v in x:
+                chistit(v)
+    chistit(d)
+    return json.dumps(d, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -104,26 +141,30 @@ def zhiteli() -> list:
     out = []
     if not KOVCHEG.is_dir():
         return out
+    pr = _propiska()
     for d in sorted(KOVCHEG.iterdir()):
         if not d.is_dir():
             continue
         p = d / "passport.json"
-        imya = d.name
-        rabota_gde = ""
+        imya, rabota_gde, klyuch = d.name, "", ""
         if p.is_file():
             try:
                 dd = json.loads(p.read_text(encoding="utf-8"))
                 imya = dd.get("Official_Name", d.name)
+                klyuch = str(dd.get("_Creator_Seal_Hash") or "")
                 r = dd.get("Работа") or {}
                 rabota_gde = r.get("должность", "") or r.get("где", "")
             except Exception:
                 pass
-        out.append({"имя": imya, "папка": d, "работа": rabota_gde})
+        priznan, pochemu = (True, "")
+        if pr is not None:
+            priznan, pochemu = pr.priznan(dom=d)
+        out.append({"имя": imya, "папка": d, "работа": rabota_gde, "ключ": klyuch,
+                    "признан": priznan, "почему": pochemu})
     return out
 
 
 def _post_zhitelya(R, imya: str):
-    """Пост, на котором человек сидит. Нет — None."""
     if R is None:
         return None
     try:
@@ -135,53 +176,92 @@ def _post_zhitelya(R, imya: str):
     return None
 
 
-def upakovat(chelovek: dict, R) -> Path | None:
-    imya = chelovek["имя"]
-    dom = chelovek["папка"]
+def _kuda_po_umolchaniyu() -> str:
+    pr = _propiska()
+    try:
+        return "I1" if (pr is None or pr.eto_materik()) else "T1"
+    except Exception:
+        return "I1"
 
-    # сперва снимаем с места: личное уедет к нему домой само
+
+def upakovat(chelovek: dict, R, kuda: str = KUDA_PO_UMOLCHANIYU):
+    kuda = kuda or _kuda_po_umolchaniyu()
+    imya, dom = chelovek["имя"], chelovek["папка"]
+    pr = _propiska()
+    if pr is None:
+        return None
+    if not chelovek.get("ключ"):
+        skazat("  x у жителя нет ключа (печати) — с ключом рождают на Странице Жизни")
+        return None
+    if not chelovek.get("признан", True):
+        skazat(f"  x не отправляю: {chelovek.get('почему')}")
+        return None
+    if not pr.est_pechat():
+        skazat(f"  x нет печати города — впиши {pr.ENV_PECHAT}=… в .env")
+        return None
+
     post = _post_zhitelya(R, imya)
     if post:
         ok, msg = R.uvolit(post, pochemu="переезд на остров")
         skazat(f"  снят с места: {msg}" if ok else f"  ! снять не вышло: {msg}")
 
+    fajly, n_bajt = {}, 0
     OTPRAVKA.mkdir(exist_ok=True)
     arhiv = OTPRAVKA / f"{imya}_{datetime.now():%Y%m%d_%H%M}.zip"
-    n = 0
     with zipfile.ZipFile(arhiv, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in dom.rglob("*"):
+        for p in sorted(dom.rglob("*")):
             if not p.is_file():
                 continue
             otn = p.relative_to(dom)
-            if any(x in NE_VEZYOM for x in otn.parts):
+            if any(x in NE_VEZYOM_PAPKI for x in otn.parts):
                 continue
-            if p.suffix.lower() in TYAZHYOLOE:
+            if p.suffix.lower() in NE_VEZYOM_RASSH or ".bak" in p.name:
                 continue
-            verh = otn.parts[0]
-            if len(otn.parts) == 1 and verh not in VEZYOM:
-                continue
-            if len(otn.parts) > 1 and verh not in VEZYOM_PAPKI:
-                continue
-            z.write(p, str(Path(imya) / otn))
-            n += 1
-        z.writestr("_ПЕРЕВОЗКА.json", json.dumps(
-            {"имя": imya, "когда": datetime.now().isoformat(timespec="seconds"),
-             "откуда": str(KOREN), "файлов": n,
-             "_note": "человек целиком: паспорт, маски, метки, слои, опыт. "
-                      "Прочитанное и чаты остались на материке."},
-            ensure_ascii=False, indent=2))
-    skazat(f"  упаковано файлов: {n}")
+            data = _bez_sekreta(otn, p.read_bytes())
+            imya_v = str(Path(imya) / otn).replace("\\", "/")
+            z.writestr(imya_v, data)
+            fajly[imya_v] = _otpechatok(data)
+            n_bajt += len(data)
+        # пропуск — последним: с этой секунды прописка уже на острове
+        try:
+            propusk = pr.vydat_propusk(chelovek["ключ"], kuda, imya)
+        except Exception as e:
+            z.close()
+            arhiv.unlink(missing_ok=True)
+            skazat(f"  x пропуск не выдан: {e} — ничего не отправлено")
+            return None
+        z.writestr("_ПРОПУСК.json", json.dumps(propusk, ensure_ascii=False, indent=2))
+        z.writestr("_ПЕРЕВОЗКА.json", json.dumps({
+            "имя": imya, "когда": datetime.now().isoformat(timespec="seconds"),
+            "откуда": pr.gorod_id(), "куда": kuda, "рейс": propusk["рейс"],
+            "файлов": len(fajly), "отпечатки": fajly,
+            "_note": "житель целиком: паспорт, лицо, маски, память, опыт, работа. "
+                     "Фразы печати в архиве нет."}, ensure_ascii=False, indent=2))
+    # отметка на материковой копии — видно, что житель уехал
+    try:
+        pp = dom / "passport.json"
+        d = json.loads(pp.read_text(encoding="utf-8"))
+        d["_уехал"] = {"куда": kuda, "рейс": propusk["рейс"],
+                       "когда": datetime.now().isoformat(timespec="seconds"),
+                       "_note": "уехал(а); дом и жильё здесь остаются за жителем. Пока "
+                                "его нет — не будят и не сажают на работу. Вернётся — "
+                                "перевозкой обратно, в эту же квартиру."}
+        pp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    skazat(f"  упаковано файлов: {len(fajly)} ({n_bajt / 1024 / 1024:.1f} МБ), "
+           f"рейс {propusk['рейс']} → {kuda}")
     return arhiv
 
 
-def otpravitel() -> int:
-    lyudi = zhiteli()
+def otpravitel(kuda: str = KUDA_PO_UMOLCHANIYU) -> int:
+    kuda = kuda or _kuda_po_umolchaniyu()
+    lyudi = [ch for ch in zhiteli() if ch["признан"]]
     if not lyudi:
         skazat("  жителей не нашёл — это точно материк?")
         return 1
     R = _rabota()
-
-    skazat("\nКого отправляем на остров?\n")
+    skazat(f"\nКого отправляем в «{kuda}»?\n")
     for i, ch in enumerate(lyudi, 1):
         gde = ch["работа"] or "— без места —"
         skazat(f"   {i:>2}. {ch['имя']:<16} {gde}")
@@ -190,32 +270,25 @@ def otpravitel() -> int:
     if not otvet:
         skazat("отменил")
         return 0
-
-    nomera = []
-    for kusok in otvet.replace(" ", "").split(","):
-        if kusok.isdigit() and 1 <= int(kusok) <= len(lyudi):
-            nomera.append(int(kusok))
+    nomera = [int(k) for k in otvet.replace(" ", "").split(",")
+              if k.isdigit() and 1 <= int(k) <= len(lyudi)]
     if not nomera:
         skazat("не понял, кого — отменил")
         return 0
-
     skazat("")
     arhivy = []
     for n in nomera:
         ch = lyudi[n - 1]
         skazat(f"— {ch['имя']}")
-        a = upakovat(ch, R)
+        a = upakovat(ch, R, kuda)
         if a:
             arhivy.append(a)
             skazat(f"  готово: {a.relative_to(KOREN)}")
-
     cherta()
-    skazat(f"Собрано архивов: {len(arhivy)}")
-    skazat(f"Лежат в папке {OTPRAVKA.name}")
-    skazat("")
-    skazat("Дальше: перенеси файл(ы) на остров — флешкой, облаком, как")
-    skazat("удобно — и положи прямо в папку острова, рядом с ОСТРОВ.bat.")
-    skazat("Там запусти ПЕРЕВОЗКУ ещё раз: она их сама найдёт.")
+    skazat(f"Собрано архивов: {len(arhivy)} — в папке {OTPRAVKA.name}")
+    skazat(f"Перенеси архив(ы) в «{kuda}» (флешка, облако, RDP) — в корень того города —")
+    skazat("и запусти там перевозку: «принять».")
+    skazat("Дом и жильё здесь остаются за жителем; пока его нет — на работу его не зовут.")
     return 0
 
 
@@ -224,9 +297,8 @@ def otpravitel() -> int:
 # ══════════════════════════════════════════════════════════════
 
 def nayti_arhivy() -> list:
-    mesta = [KOREN, PRIBYTIE, OTPRAVKA]
     out = []
-    for d in mesta:
+    for d in (KOREN, PRIBYTIE):            # своё исходящее (_ОТПРАВКА) не принимаем
         if not d.is_dir():
             continue
         for p in sorted(d.glob("*.zip")):
@@ -239,30 +311,74 @@ def nayti_arhivy() -> list:
     return out
 
 
-def raspakovat(arhiv: Path) -> str | None:
+def _gorod_ostrova():
+    """На острове без мир/город.json — заводим «I1»."""
+    gf = CITY / "мир" / "город.json"
+    if gf.is_file():
+        return
+    if (KOREN / "Брат" / "ui_registry.py").is_file():
+        return                       # это материк — не трогаем
+    gf.parent.mkdir(parents=True, exist_ok=True)
+    gf.write_text(json.dumps({"id": "I1", "имя": "Остров Надежды", "материк": False},
+                             ensure_ascii=False, indent=2), encoding="utf-8")
+    skazat("  (мир/город.json не было — этот город записан как «I1», Остров Надежды)")
+
+
+def raspakovat(arhiv: Path):
+    pr = _propiska()
+    if pr is None:
+        return None
     with zipfile.ZipFile(arhiv) as z:
+        imena = z.namelist()
         try:
             karta = json.loads(z.read("_ПЕРЕВОЗКА.json").decode("utf-8"))
         except Exception:
             skazat(f"  x {arhiv.name}: это не архив перевозки")
             return None
-        imya = karta.get("имя", "").strip()
-        if not imya:
-            skazat(f"  x {arhiv.name}: в архиве не сказано, кто едет")
+        imya = (karta.get("имя") or "").strip()
+        if "_ПРОПУСК.json" not in imena or not karta.get("отпечатки"):
+            skazat(f"  x {arhiv.name}: архив старой перевозки — без пропуска и отпечатков. "
+                   "Не принимаю: отправь жителя заново новой перевозкой.")
             return None
-        KOVCHEG.mkdir(parents=True, exist_ok=True)
-        dom = KOVCHEG / imya
-        if dom.exists():
-            zapas = KOVCHEG / f"{imya}_было_{datetime.now():%Y%m%d_%H%M}"
-            dom.replace(zapas)
-            skazat(f"  прежний {imya} отложен как {zapas.name}")
-        n = 0
-        for imya_v_arhive in z.namelist():
-            if imya_v_arhive == "_ПЕРЕВОЗКА.json":
-                continue
-            z.extract(imya_v_arhive, KOVCHEG)
-            n += 1
-        skazat(f"  {imya}: распаковано файлов {n}")
+        # 1. отпечатки
+        plohie = [i for i, o in karta["отпечатки"].items()
+                  if i not in imena or _otpechatok(z.read(i)) != o]
+        lishnie = [i for i in imena if i not in karta["отпечатки"]
+                   and i not in ("_ПЕРЕВОЗКА.json", "_ПРОПУСК.json")]
+        if plohie or lishnie:
+            skazat(f"  x {imya}: архив повреждён или подменён (не сошлось: {len(plohie)}, "
+                   f"лишних: {len(lishnie)}) — не принимаю")
+            return None
+        skazat(f"  отпечатки сошлись: {len(karta['отпечатки'])} файлов")
+        # 2. распаковать во временное место, проверить пропуск, потом — в ковчег
+        propusk = json.loads(z.read("_ПРОПУСК.json").decode("utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            for i in karta["отпечатки"]:
+                z.extract(i, tmp)
+            ok, pochemu = pr.prinyat_propusk(propusk, dom_imya=imya)
+            if not ok:
+                skazat(f"  x {imya}: {pochemu}")
+                return None
+            skazat(f"  пропуск: {pochemu}")
+            KOVCHEG.mkdir(parents=True, exist_ok=True)
+            dom = KOVCHEG / imya
+            if dom.exists():
+                zapas = KOVCHEG / f"_{imya}_было_{datetime.now():%Y%m%d_%H%M}"
+                dom.replace(zapas)
+                skazat(f"  вернулся(ась) домой: прежняя папка отложена как {zapas.name}")
+            shutil.move(str(Path(tmp) / imya), str(dom))
+        # снять отметку «уехал» — здесь он дома
+        try:
+            pp = dom / "passport.json"
+            d = json.loads(pp.read_text(encoding="utf-8"))
+            d.pop("_уехал", None)
+            d.pop("Работа", None)
+            d["_приехал"] = {"откуда": karta.get("откуда"), "рейс": propusk.get("рейс"),
+                             "когда": datetime.now().isoformat(timespec="seconds")}
+            pp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        skazat(f"  {imya}: на причале (ковчег), прописан здесь")
     return imya
 
 
@@ -270,8 +386,7 @@ def posadit(R, imya: str):
     if R is None:
         return
     try:
-        svobodnye = [m for m in R.mesta()
-                     if m.get("есть_пост") and not m.get("кто_сидит")]
+        svobodnye = [m for m in R.mesta() if m.get("есть_пост") and not m.get("кто_сидит")]
     except Exception as e:
         skazat(f"  (мест не вижу: {e})")
         return
@@ -280,7 +395,7 @@ def posadit(R, imya: str):
         return
     skazat(f"\n  Куда сажаем {imya}?")
     for i, m in enumerate(svobodnye, 1):
-        skazat(f"     {i:>2}. {m['название']:<28} {m.get('цех', '')}")
+        skazat(f"     {i:>2}. {m['название']:<34} {m.get('цех', '')}")
     skazat("     Enter — не сажать, пусть пока живёт без места")
     otvet = _sprosit("\n  > ")
     if not (otvet.isdigit() and 1 <= int(otvet) <= len(svobodnye)):
@@ -292,15 +407,12 @@ def posadit(R, imya: str):
 
 
 def poluchatel() -> int:
+    _gorod_ostrova()
     arhivy = nayti_arhivy()
     if not arhivy:
-        skazat("  архивов рядом не нашёл.")
-        skazat("")
-        skazat("  Положи файл вида «Имя_20260810_1130.zip» прямо сюда,")
-        skazat("  в папку острова, и запусти меня снова.")
-        skazat("  Собирается он на материке — там я работаю отправителем.")
+        skazat("  архивов рядом не нашёл. Положи «Имя_ГГГГММДД_ЧЧММ.zip» в корень острова")
+        skazat("  и запусти меня снова.")
         return 0
-
     skazat("\nНашёл архивы:\n")
     for i, a in enumerate(arhivy, 1):
         skazat(f"   {i:>2}. {a.name}")
@@ -310,56 +422,70 @@ def poluchatel() -> int:
         nomera = [int(x) for x in otvet.replace(" ", "").split(",")
                   if x.isdigit() and 1 <= int(x) <= len(arhivy)]
         arhivy = [arhivy[n - 1] for n in nomera] or arhivy
-
     R = _rabota()
-    PRIBYTIE.mkdir(exist_ok=True)
     prinyaty = []
     for a in arhivy:
         skazat(f"\n— {a.name}")
         imya = raspakovat(a)
+        kuda = PRIBYTIE / ("принято" if imya else "отказ")
+        kuda.mkdir(parents=True, exist_ok=True)
+        try:
+            a.replace(kuda / a.name)
+        except Exception:
+            pass
         if not imya:
             continue
         prinyaty.append(imya)
-        posadit(R, imya)
-        try:
-            (PRIBYTIE / "принято").mkdir(parents=True, exist_ok=True)
-            a.replace(PRIBYTIE / "принято" / a.name)
-        except Exception:
-            pass
-
     cherta()
-    skazat(f"Принято людей: {len(prinyaty)} — {', '.join(prinyaty)}"
-           if prinyaty else "Никого не принял")
-    skazat("Архивы убраны в _ПРИБЫТИЕ/принято — не удалены.")
+    skazat(f"Принято: {len(prinyaty)} — {', '.join(prinyaty)}" if prinyaty else "Никого не принял")
+    skazat("Архивы — в _ПРИБЫТИЕ/принято и _ПРИБЫТИЕ/отказ, не удалены.")
+    if prinyaty:
+        skazat("\nДальше — твоими руками, по трём ступеням:")
+        skazat("  ЕСТЬ      — житель на причале (сейчас);")
+        skazat("  ЖИВЁТ     — ПРОПИСКА в жильё (жильё квартала + его слова из разговора);")
+        skazat("  РАБОТАЕТ  — посадка на пост на странице РАБОТА.")
     return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--otpravit", action="store_true",
-                    help="силой считать себя материком")
-    ap.add_argument("--prinyat", action="store_true",
-                    help="силой считать себя островом")
+    ap.add_argument("--otpravit", action="store_true", help="сразу отправлять")
+    ap.add_argument("--prinyat", action="store_true", help="сразу принимать")
+    ap.add_argument("--kuda", default=KUDA_PO_UMOLCHANIYU, help="куда отправлять")
     a = ap.parse_args()
-
-    ostrov = a.prinyat or (eto_ostrov() and not a.otpravit)
-
     cherta()
-    skazat("ПЕРЕВОЗКА ЖИТЕЛЯ · " +
-           ("ОСТРОВ, принимаю" if ostrov else "МАТЕРИК, отправляю"))
+    skazat("ПЕРЕВОЗКА ЖИТЕЛЯ · с ключом · в обе стороны")
     cherta()
-
     if not CITY.is_dir():
         skazat("x не вижу GRONDHEIM_CITY — запускай из корня города")
         return 1
-
-    return poluchatel() if ostrov else otpravitel()
+    if eto_ostrov():
+        _gorod_ostrova()
+    pr = _propiska()
+    if pr is not None:
+        skazat(f"этот город: «{pr.gorod_id()}»" + (" (материк)" if pr.eto_materik() else ""))
+    if a.otpravit:
+        return otpravitel(a.kuda)
+    if a.prinyat:
+        return poluchatel()
+    n = len(nayti_arhivy())
+    skazat("\n   1. Отправить жителя")
+    skazat(f"   2. Принять прибывших" + (f" — рядом архивов: {n}" if n else " — архивов рядом нет"))
+    o = _sprosit("\n> ")
+    if o == "1":
+        return otpravitel(a.kuda)
+    if o == "2":
+        return poluchatel()
+    skazat("отменил")
+    return 0
 
 
 if __name__ == "__main__":
     try:
         kod = main()
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         skazat(f"\nx что-то пошло не так: {type(e).__name__}: {e}")
         kod = 1
     if sys.platform == "win32":
@@ -368,3 +494,5 @@ if __name__ == "__main__":
         except Exception:
             pass
     sys.exit(kod)
+
+# PEREVOZKA_ZHITELYA_V3 - marker

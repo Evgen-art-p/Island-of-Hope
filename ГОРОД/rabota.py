@@ -416,6 +416,16 @@ def prinyat(post_id: str, imya: str, kem: str = "Шеф",
         return False, "у места нет должности — сперва заведи"
     if dom_zhitelya(imya) is None:
         return False, f"жителя «{imya}» в городе не нашёл"
+    try:   # PROPISKA_MIRA_V1: копию не сажаем
+        import sys as _s_pr
+        if str(_GOROD) not in _s_pr.path:
+            _s_pr.path.insert(0, str(_GOROD))
+        import propiska as _pr
+        _ok_pr, _pochemu_pr = _pr.priznan(dom=dom_zhitelya(imya))
+        if not _ok_pr:
+            return False, f"{imya}: {_pochemu_pr}"
+    except Exception as _e_pr:
+        print(f"[ПРОПИСКА] не спросил ({_e_pr})")
     zanyal = ((d.get("кто_сидит") or {}).get("имя") or "").strip()
     if zanyal == imya:
         return True, f"{imya} и так на этом месте"

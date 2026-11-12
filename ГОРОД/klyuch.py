@@ -146,3 +146,18 @@ if __name__ == "__main__":
     print("МЕСТА:")
     for m in mesta():
         print(f"  {m['имя']:24} {m['ключ'][:16]}  {m['id']}")
+
+
+# ══ PROPISKA_MIRA_V1: копию по ключу не находят ══
+_zhiteli_do_propiski = _zhiteli
+
+
+def _zhiteli() -> list:   # noqa: F811
+    vse_ = _zhiteli_do_propiski()
+    try:
+        import propiska as _pr
+        return [z for z in vse_ if _pr.priznan(klyuch=z["ключ"], dom=z["дом"])[0]]
+    except Exception:
+        return vse_
+
+# PROPISKA_MIRA_V1 - marker
